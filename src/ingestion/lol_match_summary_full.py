@@ -2,10 +2,16 @@ import requests
 import urllib.parse
 import json
 import os
+import sys
 
-RIOT_API_KEY = "RGAPI-2d148fa7-7edc-44bd-ad3c-900a6d6af06d" 
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+from config import RIOT_API_KEY
 REGION_ROUTING = "europe"
 MATCH_COUNT = 5
+
+## print("🔐 API Key cargada:", RIOT_API_KEY)
+
 
 def get_puuid_from_riot_id(riot_id):
     if "#" not in riot_id:

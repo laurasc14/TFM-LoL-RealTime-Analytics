@@ -46,3 +46,24 @@ configs/
 
 ```bash
 pip install -r requirements.txt
+
+
+### 🔐 Configuración de clave API
+
+Este proyecto requiere una clave válida de Riot Games.  
+Por seguridad, esta clave no está incluida en el repositorio.
+
+Antes de ejecutar los scripts, crea un archivo:
+
+```plaintext
+src/config.py
+```
+
+con el siguiente contenido:
+
+```python
+RIOT_API_KEY = "tu_clave_aquí"
+```
+
+Este archivo está ignorado en `.gitignore` y debe crearse manualmente en cada entorno.
+

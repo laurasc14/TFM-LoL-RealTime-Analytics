@@ -205,3 +205,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Secretos y entorno
+.env
+
+# Claves y configuración local
+src/config.py
+
+
