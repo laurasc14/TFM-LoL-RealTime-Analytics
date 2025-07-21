@@ -47,7 +47,6 @@ configs/
 ```bash
 pip install -r requirements.txt
 
-
 ### 🔐 Configuración de clave API
 
 Este proyecto requiere una clave válida de Riot Games.  
@@ -66,4 +65,8 @@ RIOT_API_KEY = "tu_clave_aquí"
 ```
 
 Este archivo está ignorado en `.gitignore` y debe crearse manualmente en cada entorno.
+💡 Puedes usar como plantilla el archivo de ejemplo:
 
+```plaintext
+src/config_example.py
+```
