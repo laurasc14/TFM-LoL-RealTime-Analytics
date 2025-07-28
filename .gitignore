@@ -210,6 +210,6 @@ __marimo__/
 .env
 
 # Claves y configuración local
-src/config.py
+shared/config.py
 
 

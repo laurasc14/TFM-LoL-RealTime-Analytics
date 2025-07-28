@@ -6,7 +6,7 @@ import sys
 
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-from config import RIOT_API_KEY
+from shared.config import RIOT_API_KEY
 REGION_ROUTING = "europe"
 MATCH_COUNT = 5
 

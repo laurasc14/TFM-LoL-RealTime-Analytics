@@ -55,7 +55,7 @@ Por seguridad, esta clave no está incluida en el repositorio.
 Antes de ejecutar los scripts, crea un archivo:
 
 ```plaintext
-src/config.py
+src/shared/onfig.py
 ```
 
 con el siguiente contenido:
@@ -68,5 +68,5 @@ Este archivo está ignorado en `.gitignore` y debe crearse manualmente en cada e
 💡 Puedes usar como plantilla el archivo de ejemplo:
 
 ```plaintext
-src/config_example.py
+src/shared/config_example.py
 ```
