@@ -14,32 +14,40 @@ Desarrollar una plataforma capaz de:
 - Integrar lógica basada en reglas y modelos ligeros de ML.
 
 ## 🧱 Arquitectura General
-Riot API → Kafka → Spark Streaming →
-├── MongoDB (almacenamiento)
-├── Streamlit (visualización)
-└── Módulo ML (análisis contextual)
+```plaintext
+Riot API 
+   ↓
+Apache Kafka 
+   ↓
+Spark Streaming 
+   ├── MongoDB / PostgreSQL (almacenamiento)
+   ├── Streamlit (visualización)
+   └── Módulo ML (análisis contextual)
+```
 
 
 ## 🚀 Tecnologías utilizadas
 
-- Apache Kafka
-- Apache Spark Streaming
-- Python (requests, kafka-python, pandas)
-- MongoDB / PostgreSQL
-- Streamlit
-- Docker
-- GitHub
+- Lenguaje: Python
+- Ingestión: Apache Kafka
+- Procesamiento: Apache Spark Streaming
+- Almacenamiento: MongoDB / PostgreSQL
+- Visualización: Streamlit
+- Infraestructura: Docker
+- Control de versiones: GitHub
 
 ## 📁 Estructura
+```plaintext
 src/
-├── ingestion/ # Productores Kafka
-├── processing/ # Spark Streaming
-├── storage/ # Guardado en Mongo
-├── insights/ # Reglas y modelos ML
-├── dashboard/ # Streamlit app
-tests/
-docs/
-configs/
+├── ingestion/       # Productores Kafka
+├── riot_fetcher/    # Obtención de datos desde la API de Riot
+├── processing/      # Procesamiento con Spark Streaming
+├── storage/         # Guardado en Mongo/PostgreSQL
+├── dashboard/       # Aplicación Streamlit
+├── shared/          # Configuración compartida
+tests/               # Pruebas
+docs/                # Documentación
+```
 
 
 ## 🛠 Requisitos
@@ -55,7 +63,7 @@ Por seguridad, esta clave no está incluida en el repositorio.
 Antes de ejecutar los scripts, crea un archivo:
 
 ```plaintext
-src/shared/onfig.py
+shared/onfig.py
 ```
 
 con el siguiente contenido:
@@ -68,5 +76,5 @@ Este archivo está ignorado en `.gitignore` y debe crearse manualmente en cada e
 💡 Puedes usar como plantilla el archivo de ejemplo:
 
 ```plaintext
-src/shared/config_example.py
+shared/config_example.py
 ```
