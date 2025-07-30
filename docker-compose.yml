@@ -61,7 +61,7 @@ services:
   api:
     build:
       context: .
-      dockerfile: api/Dockerfile
+      dockerfile: app/src/api/Dockerfile
     container_name: api
     ports:
       - "8000:8000"
@@ -77,7 +77,7 @@ services:
   dashboard:
     build:
       context: .
-      dockerfile: dashboard/Dockerfile
+      dockerfile: app/src/dashboard/Dockerfile
     container_name: dashboard
     ports:
       - "8501:8501"
@@ -90,7 +90,7 @@ services:
   riot_fetcher:
     build:
       context: .
-      dockerfile: riot_fetcher/Dockerfile
+      dockerfile: app/src/riot_fetcher/Dockerfile
     container_name: riot_fetcher
     volumes:
       - ./shared:/app/shared  # Compartimos módulo shared
@@ -106,7 +106,7 @@ services:
   ingestion:
     build:
       context: .
-      dockerfile: src/ingestion/Dockerfile
+      dockerfile: app/src/ingestion/Dockerfile
     container_name: ingestion
     volumes:
       - ./shared:/app/shared  # Compartimos módulo shared
