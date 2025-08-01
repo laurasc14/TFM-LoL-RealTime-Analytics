@@ -9,6 +9,7 @@ DB_NAME = "lol_realtime"
 COLLECTION = "matches"
 
 async def consume():
+    print("Starting Kafka consumer...")
     client = AsyncIOMotorClient(MONGO_URI)
     db = client[DB_NAME]
     collection = db[COLLECTION]
@@ -16,15 +17,19 @@ async def consume():
     consumer = AIOKafkaConsumer(
         TOPIC,
         bootstrap_servers=KAFKA_BOOTSTRAP,
+        group_id="lol-consumer-group",
         value_deserializer=lambda x: json.loads(x.decode("utf-8"))
     )
     await consumer.start()
     try:
+        count = 0
         async for msg in consumer:
             await collection.insert_one(msg.value)
-            print(f"Inserted match {msg.value.get('match_id')}")
+            count += 1
+            print(f"[{count}] Inserted match {msg.value.get('match_id')}")
     finally:
         await consumer.stop()
+        print("Consumer stopped.")
 
 if __name__ == "__main__":
     asyncio.run(consume())

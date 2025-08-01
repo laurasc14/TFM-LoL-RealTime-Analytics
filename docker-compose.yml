@@ -1,13 +1,21 @@
+version: "3.8"
+
+networks:
+  tfm-net:
+    driver: bridge
+
 services:
   zookeeper:
     image: bitnami/zookeeper:3.8
-    container_name: final-zookeeper
     ports:
       - "2181:2181"
+    environment:
+      - ALLOW_ANONYMOUS_LOGIN=yes
+    networks:
+      - tfm-net
 
   kafka:
     image: bitnami/kafka:3.5
-    container_name: final-kafka
     ports:
       - "9092:9092"
     environment:
@@ -15,11 +23,13 @@ services:
       - KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181
       - KAFKA_LISTENERS=PLAINTEXT://:9092
       - KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT
       - KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1
       - ALLOW_PLAINTEXT_LISTENER=yes
     depends_on:
       - zookeeper
-
+    networks:
+      - tfm-net
 
   mongo:
     image: mongo:6.0
@@ -39,6 +49,8 @@ services:
     depends_on:
       - kafka
       - mongo
+    networks:
+      - tfm-net
 
   riot_fetcher:
     build:
@@ -48,6 +60,8 @@ services:
     depends_on:
       - kafka
       - mongo
+    networks:
+      - tfm-net
 
   ingestion:
     build:
@@ -57,6 +71,8 @@ services:
     depends_on:
       - kafka
       - mongo
+    networks:
+      - tfm-net
 
   dashboard:
     build:
@@ -67,3 +83,5 @@ services:
       - "8501:8501"
     depends_on:
       - mongo
+    networks:
+      - tfm-net

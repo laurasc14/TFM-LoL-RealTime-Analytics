@@ -1,13 +1,13 @@
-import os, sys, asyncio, json
-import requests
-import urllib.parse
+import os, asyncio, json, requests, urllib.parse
 from aiokafka import AIOKafkaProducer
-
-# Aseguramos acceso al config/config.py del proyecto
 from src.config.config import RIOT_API_KEY
+from dotenv import load_dotenv
+
+load_dotenv()
 
 REGION_ROUTING = "europe"
 MATCH_COUNT = 5
+FETCH_INTERVAL = int(os.getenv("FETCH_INTERVAL", 60))  # en segundos
 SUMMONER_NAME = os.getenv("SUMMONER_NAME", "PlayerName#EUW")
 KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")
 TOPIC = "events_raw"
@@ -58,31 +58,30 @@ def get_match_summary(match_id, my_puuid):
 async def send_to_kafka(producer, data):
     await producer.send_and_wait(TOPIC, json.dumps(data).encode())
 
-async def create_kafka_producer(bootstrap_servers, retries=5, delay=5):
-    for attempt in range(retries):
-        try:
-            producer = AIOKafkaProducer(bootstrap_servers=bootstrap_servers)
-            await producer.start()
-            print("Kafka connection established.")
-            return producer
-        except Exception as e:
-            print(f"Kafka connection failed ({e}). Retrying in {delay}s...")
-            await asyncio.sleep(delay)
-    raise RuntimeError("Failed to connect to Kafka after several retries.")
-
 async def main():
+    print("Starting Riot Fetcher...")
     puuid, game_name, tag = get_puuid_from_riot_id(SUMMONER_NAME)
-    producer = await create_kafka_producer(KAFKA_BOOTSTRAP)
+    print(f"Tracking matches for {game_name}#{tag}")
+    producer = AIOKafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP)
+    await producer.start()
+    sent_ids = set()
     try:
-        match_ids = get_match_ids(puuid, MATCH_COUNT)
-        for mid in match_ids:
-            summary = get_match_summary(mid, puuid)
-            if summary:
-                await send_to_kafka(producer, summary)
-                print(f"Sent match {mid} to Kafka")
-        print("All matches sent.")
+        while True:
+            match_ids = get_match_ids(puuid, MATCH_COUNT)
+            new_matches = [mid for mid in match_ids if mid not in sent_ids]
+            if new_matches:
+                for mid in new_matches:
+                    summary = get_match_summary(mid, puuid)
+                    if summary:
+                        await send_to_kafka(producer, summary)
+                        sent_ids.add(mid)
+                        print(f"Sent match {mid} to Kafka")
+            else:
+                print("No new matches found.")
+            await asyncio.sleep(FETCH_INTERVAL)
     finally:
         await producer.stop()
+        print("Fetcher stopped.")
 
 if __name__ == "__main__":
     asyncio.run(main())
