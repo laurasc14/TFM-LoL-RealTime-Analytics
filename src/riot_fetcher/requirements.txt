@@ -1,0 +1,5 @@
+requests
+pymongo
+confluent-kafka
+python-dotenv
+aiokafka
