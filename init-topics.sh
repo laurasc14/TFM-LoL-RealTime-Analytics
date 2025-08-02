@@ -1,32 +1,15 @@
 #!/bin/bash
-echo "Esperando a Kafka..."
-sleep 10
+echo "Esperando a que Kafka esté disponible..."
 
-BROKER="kafka1:9092"
+# Esperar hasta que Kafka responda
+until kafka-topics.sh --bootstrap-server kafka1:9092 --list &>/dev/null; do
+  echo "Kafka no está listo, reintentando en 2 segundos..."
+  sleep 2
+done
 
-create_topic() {
-  local topic=$1
-  local partitions=$2
-  local replication=$3
-  local retention=$4
+echo "Kafka disponible. Creando tópicos..."
+kafka-topics.sh --create --if-not-exists --topic matches --partitions 3 --replication-factor 1 --bootstrap-server kafka1:9092
+kafka-topics.sh --create --if-not-exists --topic players --partitions 3 --replication-factor 1 --bootstrap-server kafka1:9092
+kafka-topics.sh --create --if-not-exists --topic events --partitions 3 --replication-factor 1 --bootstrap-server kafka1:9092
 
-  kafka-topics.sh --bootstrap-server $BROKER --list | grep -q "^$topic$"
-  if [ $? -eq 0 ]; then
-    echo "El tópico '$topic' ya existe, omitiendo..."
-  else
-    echo "Creando tópico '$topic' con $partitions particiones, factor $replication y retención $retention ms..."
-    kafka-topics.sh --create \
-      --if-not-exists \
-      --topic "$topic" \
-      --partitions "$partitions" \
-      --replication-factor "$replication" \
-      --config retention.ms="$retention" \
-      --bootstrap-server "$BROKER"
-  fi
-}
-
-create_topic "lol-matches" 6 3 604800000
-create_topic "lol-players" 6 3 604800000
-create_topic "lol-events" 6 3 259200000
-
-echo "Tópicos inicializados correctamente."
+echo "Tópicos iniciales creados: matches, players, events"
