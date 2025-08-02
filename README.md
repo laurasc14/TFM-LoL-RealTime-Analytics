@@ -1,8 +1,9 @@
 # TFM - Análisis en Tiempo Real de Partidas de Videojuegos Competitivos
 
-Este repositorio contiene el desarrollo del Trabajo de Fin de Máster en Ingeniería de Datos (UCM), titulado:
+Plataforma de análisis en tiempo real de partidas de **League of Legends**, diseñada como parte del Trabajo de Fin de Máster en Ingeniería de Datos.  
+La arquitectura combina **procesamiento en streaming**, **almacenamiento NoSQL** y un **dashboard interactivo**, permitiendo consultar estadísticas actualizadas de las partidas mientras suceden.
 
-**"Análisis inteligente en tiempo real de partidas de videojuegos competitivos"**
+---
 
 ## 🎯 Objetivo
 
@@ -13,44 +14,60 @@ Desarrollar una plataforma capaz de:
 - Visualizar estadísticas y análisis contextual en un dashboard interactivo.
 - Integrar lógica basada en reglas y modelos ligeros de ML.
 
-## 🧱 Arquitectura General
-```plaintext
-Riot API 
-   ↓
-Apache Kafka 
-   ↓
-Spark Streaming 
-   ├── MongoDB / PostgreSQL (almacenamiento)
-   ├── Streamlit (visualización)
-   └── Módulo ML (análisis contextual)
-```
+---
 
+## 🧱 Arquitectura
+
+![Arquitectura del proyecto](./docs/arquitectura_lol_analytics.png)
+
+**Componentes principales:**
+- **Zookeeper**: Coordinación de los brokers Kafka.
+- **Kafka Cluster (3 brokers)**: Ingesta y distribución de eventos en tiempo real.
+- **MongoDB**: Almacenamiento NoSQL para datos procesados.
+- **API**: Servicio REST para exponer datos a terceros.
+- **Riot Fetcher**: Obtención de datos desde la API oficial de Riot Games.
+- **Ingestion**: Procesamiento y transformación de datos.
+- **Dashboard**: Interfaz gráfica con métricas y visualizaciones en Streamlit.
+
+---
 
 ## 🚀 Tecnologías utilizadas
 
-- **Docker & Docker Compose** – Orquestación de todos los servicios.
-- **Kafka (3 brokers)** – Ingestión y distribución de eventos en tiempo real.
-- **Zookeeper** – Coordinación de los brokers Kafka.
-- **MongoDB** – Base de datos NoSQL para almacenar partidas y estadísticas.
-- **FastAPI** – Backend para exponer datos y endpoints.
-- **Streamlit** – Dashboard para visualización de métricas.
-- **Python** – Lógica de procesamiento e ingestión.
-- **Makefile** – Automatización de comandos Docker.
-- **Bash Scripts** – Inicialización automática de tópicos Kafka.
+| Tecnología     | Uso                                |
+|----------------|-----------------------------------|
+| **Docker**     | Contenedorización y orquestación  |
+| **Kafka**      | Streaming de datos                |
+| **Zookeeper**  | Coordinación de Kafka             |
+| **MongoDB**    | Base de datos NoSQL               |
+| **Python**     | Servicios backend y procesadores  |
+| **Streamlit**  | Dashboard interactivo             |
+| **FastAPI**    | Exposición de datos vía API REST  
+
+--- 
 
 ## 📁 Estructura
 ```plaintext
-src/
-├── ingestion/       # Productores Kafka
-├── riot_fetcher/    # Obtención de datos desde la API de Riot
-├── processing/      # Procesamiento con Spark Streaming
-├── storage/         # Guardado en Mongo/PostgreSQL
-├── dashboard/       # Aplicación Streamlit
-├── shared/          # Configuración compartida
-tests/               # Pruebas
-docs/                # Documentación
+├── app/
+│ ├── api/ # Servicio FastAPI
+│ ├── dashboard/ # Dashboard en Streamlit
+│ ├── ingestion/ # Procesamiento de datos
+│ └── riot_fetcher/ # Conexión con la API de Riot Games
+├── data/ # Datos persistentes (MongoDB, Kafka)
+├── connect
+├── output
+├── src/
+│ ├── api/ 
+│ ├── dashboard/ 
+│ ├── ingestion/ 
+│ └── riot_fetcher/
+├── .env 
+├── docs/ # Diagramas y documentación
+├── init-topics.sh # Script para inicializar tópicos Kafka
+├── docker-compose.yml # Orquestación de contenedores
+├── Makefile # Comandos simplificados para levantar el entorno
+└── README.md # Este archivo
 ```
-
+---
 
 ## 🛠 Requisitos
 
@@ -119,6 +136,43 @@ Re-crear tópicos Kafka
 make recreate-topics
 ```
 
+---
+
+## 🚀 Cómo ejecutar el proyecto
+
+1. **Clonar el repositorio**
+   ```bash
+   git clone https://github.com/laurasc14/TFM-LoL-RealTime-Analytics.git
+   cd TFM-LoL-RealTime-Analytics
+   ```
+2. **Levantar la infraestructura**
+    ```bash
+   make up
+   ```
+3. (Opcional) Incializar tópicos Kafka
+    ```bash
+   make init-topics
+   ```
+4. Detener entorno
+    ```bash
+   make down
+   ```
+
+---
+
+## 🔧 Comandos útiles
+**Crear un nuevo tópico:**
+   ```bash
+   docker exec -it kafka1 kafka-topics.sh --create --topic <nombre> --partitions 3 --replication-factor 3 --bootstrap-server kafka1:9092
+   ```
+**Probar productor/consumidor:**
+   ```bash
+   docker exec -it kafka1 kafka-console-producer.sh --broker-list kafka1:9092 --topic test
+   docker exec -it kafka1 kafka-console-consumer.sh --bootstrap-server kafka1:9092 --topic test --from-beginning
+   ```
+
+---
+
 ## 📊 Tópicos Kafka
 
 | Tópico        | Particiones | Replicación | Retención |
@@ -127,11 +181,16 @@ make recreate-topics
 | `lol-players` | 6           | 3           | 7 días    |
 | `lol-events`  | 6           | 3           | 3 días    |
 
+---
+
 ## 🔮 Próximos pasos
 
-- Integración con sistema de métricas (Prometheus + Grafana).
-- Autenticación en la API.
-- Mejora del Dashboard con visualizaciones avanzadas.
+- Implementar autenticación y seguridad en la API.
+- Agregar almacenamiento histórico optimizado.
+- Mejorar las visualizaciones del dashboard.
+- Desplegar en entorno cloud para pruebas externas.
+
+---
 
 ## Autor
-Proyecto desarrollado por Laura Solé como parte del Trabajo Fin de Máster.
+Proyecto desarrollado por Laura Solé como parte del Trabajo Fin de Máster, UCM.
