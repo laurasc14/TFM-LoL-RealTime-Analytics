@@ -72,3 +72,6 @@ consumer:
 # Entrar a la shell de MongoDB
 mongo:
 	docker exec -it final-mongo mongosh
+
+check-mongo:
+	docker exec -it final-mongo mongosh lol_realtime --eval "db.matches.find().pretty()"

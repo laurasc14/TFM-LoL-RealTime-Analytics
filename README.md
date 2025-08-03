@@ -1,7 +1,6 @@
 # TFM - Análisis en Tiempo Real de Partidas de Videojuegos Competitivos
 
-Plataforma de análisis en tiempo real de partidas de **League of Legends**, diseñada como parte del Trabajo de Fin de Máster en Ingeniería de Datos.  
-La arquitectura combina **procesamiento en streaming**, **almacenamiento NoSQL** y un **dashboard interactivo**, permitiendo consultar estadísticas actualizadas de las partidas mientras suceden.
+Este proyecto busca desarrollar un sistema de analítica en tiempo real para partidas de League of Legends, utilizando un stack de procesamiento basado en Kafka, MongoDB y servicios en contenedores para adquisición, ingestión y visualización de datos.
 
 ---
 
@@ -33,15 +32,16 @@ Desarrollar una plataforma capaz de:
 
 ## 🚀 Tecnologías utilizadas
 
-| Tecnología     | Uso                                |
-|----------------|-----------------------------------|
-| **Docker**     | Contenedorización y orquestación  |
-| **Kafka**      | Streaming de datos                |
-| **Zookeeper**  | Coordinación de Kafka             |
-| **MongoDB**    | Base de datos NoSQL               |
-| **Python**     | Servicios backend y procesadores  |
-| **Streamlit**  | Dashboard interactivo             |
-| **FastAPI**    | Exposición de datos vía API REST  
+| Tecnología    | Uso                                |
+|---------------|-----------------------------------|
+| **Docker**    | Contenedorización y orquestación  |
+| **Kafka**     | Streaming de datos                |
+| **Zookeeper** | Coordinación de Kafka             |
+| **MongoDB**   | Base de datos NoSQL               |
+| **Python**    | Servicios backend y procesadores  |
+| **Streamlit** | Dashboard interactivo             |
+| **FastAPI**   | Exposición de datos vía API REST  
+| **Makefile**  | Simplificar la gestión del entorno  
 
 --- 
 
@@ -185,10 +185,9 @@ make recreate-topics
 
 ## 🔮 Próximos pasos
 
-- Implementar autenticación y seguridad en la API.
-- Agregar almacenamiento histórico optimizado.
-- Mejorar las visualizaciones del dashboard.
-- Desplegar en entorno cloud para pruebas externas.
+- Definir el esquema de datos en MongoDB para partidas, jugadores y eventos. 
+- Integrar la API oficial de Riot Games para reemplazar los datos mock. 
+- Desarrollar visualizaciones avanzadas en el dashboard.
 
 ---
 

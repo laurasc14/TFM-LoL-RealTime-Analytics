@@ -1,53 +1,42 @@
-import time
+# src/ingestion/consumer_mock.py
 import json
+import logging
 from kafka import KafkaConsumer
-from pymongo import MongoClient
+from pymongo import MongoClient, errors
 
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+KAFKA_BROKER = "kafka1:9092"
 TOPIC = "matches"
-BOOTSTRAP_SERVERS = ['kafka1:9092', 'kafka2:9093', 'kafka3:9094']
 MONGO_URI = "mongodb://final-mongo:27017/"
-DB_NAME = "tfm"
+DB_NAME = "lol_realtime"
 COLLECTION_NAME = "matches"
 
-# Conectar a MongoDB
-print("Conectando a MongoDB...")
-mongo_client = None
-while not mongo_client:
-    try:
-        mongo_client = MongoClient(MONGO_URI)
-        db = mongo_client[DB_NAME]
-        collection = db[COLLECTION_NAME]
-        print(f"✅ Conectado a MongoDB. Guardando en {DB_NAME}.{COLLECTION_NAME}")
-    except Exception as e:
-        print(f"❌ Error conectando a MongoDB: {e}. Reintentando en 5s...")
-        time.sleep(5)
+# Conexión a MongoDB
+try:
+    mongo_client = MongoClient(MONGO_URI)
+    db = mongo_client[DB_NAME]
+    collection = db[COLLECTION_NAME]
+    logging.info("Conectado a MongoDB en %s", MONGO_URI)
+except errors.ConnectionFailure:
+    logging.error("No se pudo conectar a MongoDB.")
+    exit(1)
 
-# Conectar a Kafka con reintentos
-print("Conectando a Kafka...")
-consumer = None
-while not consumer:
-    try:
-        consumer = KafkaConsumer(
-            TOPIC,
-            bootstrap_servers=BOOTSTRAP_SERVERS,
-            value_deserializer=lambda v: json.loads(v.decode('utf-8')),
-            auto_offset_reset='earliest',
-            enable_auto_commit=True,
-            group_id='consumer-group-1'
-        )
-        print(f"✅ Conectado a Kafka. Escuchando el topic '{TOPIC}'...")
-    except Exception as e:
-        print(f"❌ Kafka no disponible: {e}. Reintentando en 5s...")
-        time.sleep(5)
+# Conexión a Kafka
+consumer = KafkaConsumer(
+    TOPIC,
+    bootstrap_servers=[KAFKA_BROKER],
+    auto_offset_reset='earliest',
+    enable_auto_commit=True,
+    value_deserializer=lambda x: json.loads(x.decode('utf-8'))
+)
+logging.info("Escuchando mensajes en el topic '%s'...", TOPIC)
 
-# Procesar mensajes
+# Consumo e inserción
 for message in consumer:
+    data = message.value
     try:
-        match_data = message.value
-        if isinstance(match_data, dict):
-            collection.insert_one(match_data)
-            print(f"📥 Insertado en MongoDB: {match_data}")
-        else:
-            print(f"⚠️ Mensaje descartado (no es un dict): {match_data}")
+        collection.insert_one(data)
+        logging.info("Insertado en MongoDB: %s", data)
     except Exception as e:
-        print(f"❌ Error procesando mensaje: {e}")
+        logging.error("Error insertando el mensaje %s: %s", data, e)
