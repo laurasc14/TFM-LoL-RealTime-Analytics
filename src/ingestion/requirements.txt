@@ -1,4 +1,6 @@
 requests
 confluent-kafka
 pandas
+kafka-python
+pymongo
 python-dotenv

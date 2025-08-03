@@ -60,3 +60,15 @@ init-topics:
 
 recreate-topics:
 	$(DOCKER_COMPOSE) run --rm init-topics
+
+# Ejecutar el productor mock
+producer:
+	docker exec -it final-ingestion python src/ingestion/producer_mock.py
+
+# Ejecutar el consumidor mock (si quieres probar)
+consumer:
+	docker exec -it final-ingestion python src/ingestion/consumer_mock.py
+
+# Entrar a la shell de MongoDB
+mongo:
+	docker exec -it final-mongo mongosh

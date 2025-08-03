@@ -148,3 +148,16 @@ services:
       - mongo
     networks:
       - tfm-net
+
+  producer-mock:
+    build:
+      context: .
+      dockerfile: app/ingestion/Dockerfile
+    container_name: final-producer-mock
+    command: python src/ingestion/producer_mock.py
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+    networks:
+      - tfm-net
