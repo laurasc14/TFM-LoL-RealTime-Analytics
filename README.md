@@ -32,7 +32,7 @@ Desarrollar una plataforma capaz de:
 
 ## 🚀 Tecnologías utilizadas
 
-| Tecnología    | Uso                                |
+| Tecnología    | Uso                               |
 |---------------|-----------------------------------|
 | **Docker**    | Contenedorización y orquestación  |
 | **Kafka**     | Streaming de datos                |
@@ -40,8 +40,8 @@ Desarrollar una plataforma capaz de:
 | **MongoDB**   | Base de datos NoSQL               |
 | **Python**    | Servicios backend y procesadores  |
 | **Streamlit** | Dashboard interactivo             |
-| **FastAPI**   | Exposición de datos vía API REST  
-| **Makefile**  | Simplificar la gestión del entorno  
+| **FastAPI**   | Exposición de datos vía API REST  |
+| **Makefile**  | Simplificar la gestión del entorno|
 
 --- 
 
@@ -82,7 +82,7 @@ Por seguridad, esta clave no está incluida en el repositorio.
 Antes de ejecutar los scripts, crea un archivo:
 
 ```plaintext
-shared/onfig.py
+src/config/config.py
 ```
 
 con el siguiente contenido:
@@ -95,7 +95,7 @@ Este archivo está ignorado en `.gitignore` y debe crearse manualmente en cada e
 💡 Puedes usar como plantilla el archivo de ejemplo:
 
 ```plaintext
-shared/config_example.py
+src/config/config_example.py
 ```
 
 ## ⚡ Comandos Rápidos
@@ -136,6 +136,11 @@ Re-crear tópicos Kafka
 make recreate-topics
 ```
 
+Probar productor de datos simulados
+```bash
+make producer-mock
+```
+
 ---
 
 ## 🚀 Cómo ejecutar el proyecto
@@ -153,7 +158,13 @@ make recreate-topics
     ```bash
    make init-topics
    ```
-4. Detener entorno
+   
+4. (Opcional) Ejecutar productor mock
+    ```bash
+   make producer-mock
+   ```
+
+5. Detener entorno
     ```bash
    make down
    ```
