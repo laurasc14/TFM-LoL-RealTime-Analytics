@@ -6,12 +6,12 @@ Este proyecto busca desarrollar un sistema de analítica en tiempo real para par
 
 ## 🎯 Objetivo
 
-Desarrollar una plataforma capaz de:
-- Ingerir datos en tiempo real desde la API de Riot Games (League of Legends).
-- Procesar los eventos con Spark Streaming.
-- Detectar eventos tácticos relevantes (snowballs, comebacks...).
-- Visualizar estadísticas y análisis contextual en un dashboard interactivo.
-- Integrar lógica basada en reglas y modelos ligeros de ML.
+Plataforma para:
+- Ingerir datos en tiempo real desde la **Riot API (LoL)**.
+- Publicar eventos en **Kafka** y consumirlos con **Python (aiokafka)**.
+- Persistirlos en **MongoDB**.
+- Mostrar métricas en un **dashboard (Streamlit)**.
+- Sentar bases para detección de eventos tácticos (reglas/ML ligero).
 
 ---
 
@@ -19,14 +19,14 @@ Desarrollar una plataforma capaz de:
 
 ![Arquitectura del proyecto](./docs/arquitectura_lol_analytics.png)
 
-**Componentes principales:**
-- **Zookeeper**: Coordinación de los brokers Kafka.
-- **Kafka Cluster (3 brokers)**: Ingesta y distribución de eventos en tiempo real.
-- **MongoDB**: Almacenamiento NoSQL para datos procesados.
-- **API**: Servicio REST para exponer datos a terceros.
-- **Riot Fetcher**: Obtención de datos desde la API oficial de Riot Games.
-- **Ingestion**: Procesamiento y transformación de datos.
-- **Dashboard**: Interfaz gráfica con métricas y visualizaciones en Streamlit.
+
+**Flujo:** Riot API → Kafka → Consumers/ETL → MongoDB → Dashboard
+
+**Servicios (Docker Compose):**
+- `zookeeper` + `kafka[1..3]` – cluster Kafka
+- `final-riot-fetcher` – productor (RiotWatcher 3.3.x + aiokafka)
+- `final-mongo` – base de datos
+- *(opcional)* `dashboard` – Streamlit
 
 ---
 
@@ -69,26 +69,16 @@ Desarrollar una plataforma capaz de:
 ```
 ---
 
-## 🛠 Requisitos
+## 🚀 Puesta en marcha
 
-```bash
-pip install -r requirements.txt
+### 1) Prerrequisitos
+- Docker + Docker Compose
+- Clave válida de Riot Games
 
-### 🔐 Configuración de clave API
-
-Este proyecto requiere una clave válida de Riot Games.  
-Por seguridad, esta clave no está incluida en el repositorio.
-
-Antes de ejecutar los scripts, crea un archivo:
-
-```plaintext
-src/config/config.py
-```
-
-con el siguiente contenido:
-
+### 2) Configuración
+Crea `src/config/config.py` (no versionado) con:
 ```python
-RIOT_API_KEY = "tu_clave_aquí"
+RIOT_API_KEY = "TU_CLAVE_AQUI"
 ```
 
 Este archivo está ignorado en `.gitignore` y debe crearse manualmente en cada entorno.
@@ -98,6 +88,50 @@ Este archivo está ignorado en `.gitignore` y debe crearse manualmente en cada e
 src/config/config_example.py
 ```
 
+Edita .env (o variables) para:
+
+````python
+SUMMONER_NAME="NOMBRE#TAG"
+KAFKA_BOOTSTRAP_SERVERS="kafka1:9092,kafka2:9093,kafka3:9094"
+````
+### 3) Levantar infraestructura
+
+```python
+docker compose up -d
+```
+
+### 4) Ver logs del fetcher
+
+```python
+docker logs -f final-riot-fetcher
+```
+
+Deberías ver:
+
+- PUUID resuelto
+- Últimas partidas (EUW1_xxxxx)
+- Mensajes producidos al tópico matches
+
+Nota: el tópico matches se autocrea. El primer envío puede mostrar “Topic … is not available during auto-create initialization”; es normal y se resuelve solo en segundos.
+---
+## 📊 Datos y tópicos
+- Topic: matches 
+- Payload ejemplo:
+
+```python
+{"match_id": "EUW1_7485826231", "timestamp": 1754648870.0463}
+```
+- Colección Mongo (sugerida): lol.matches_raw
+---
+## 🧰 Scripts útiles
+
+````python
+docker compose down -v           # parar y borrar volúmenes
+docker compose build --no-cache  # reconstruir imágenes
+docker logs -f final-riot-fetcher
+
+````
+---
 ## ⚡ Comandos Rápidos
 
 Antes de empezar, asegúrate de tener Docker y Make instalados.  
@@ -161,7 +195,7 @@ make producer-mock
    
 4. (Opcional) Ejecutar productor mock
     ```bash
-   make producer-mock
+   make producer-mockhttps://github.com/laurasc14/TFM-LoL-RealTime-Analytics
    ```
 
 5. Detener entorno
@@ -193,12 +227,30 @@ make producer-mock
 | `lol-events`  | 6           | 3           | 3 días    |
 
 ---
+## ✅ Estado actual (MVP)
 
-## 🔮 Próximos pasos
+- ✔️ Productor Riot → Kafka operativo 
+- ✔️ Autocreación de tópico matches
+- ⏳ Consumer a Mongo (en progreso)
+- ⏳ Dashboard Streamlit (en progreso)
+- ⏳ Reglas/ML (siguientes iteraciones)
 
-- Definir el esquema de datos en MongoDB para partidas, jugadores y eventos. 
-- Integrar la API oficial de Riot Games para reemplazar los datos mock. 
-- Desarrollar visualizaciones avanzadas en el dashboard.
+---
+
+## 🗺️ Roadmap corto
+
+- Consumer asíncrono → MongoDB 
+- Esquema y validaciones (pydantic)
+- Dashboard inicial (últimas partidas, filtros)
+- Enriquecimientos: duración, modo, equipos, KDA por jugador 
+- Reglas básicas (snowball/comeback)
+
+---
+
+## 📚 Notas
+
+- Librería: riotwatcher >= 3.3.1 (no existe 3.2.6 en PyPI). 
+- Endpoints: Account (puuid) y Match (list/details) con routing europeo.
 
 ---
 
