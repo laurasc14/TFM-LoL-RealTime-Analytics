@@ -1,0 +1,33 @@
+{
+  "$jsonSchema": {
+    "bsonType": "object",
+    "required": ["match_id", "timestamp", "event_type", "details"],
+    "properties": {
+      "match_id": {
+        "bsonType": "string",
+        "description": "ID de la partida a la que pertenece el evento"
+      },
+      "timestamp": {
+        "bsonType": "date",
+        "description": "Momento exacto en que ocurrió el evento"
+      },
+      "event_type": {
+        "bsonType": "string",
+        "description": "Tipo de evento (e.g., kill, tower_destroyed, dragon_slain)"
+      },
+      "details": {
+        "bsonType": "object",
+        "description": "Detalles específicos del evento",
+        "properties": {
+          "killer": { "bsonType": "string" },
+          "victim": { "bsonType": "string" },
+          "assists": {
+            "bsonType": "array",
+            "items": { "bsonType": "string" }
+          },
+          "objective": { "bsonType": "string" }
+        }
+      }
+    }
+  }
+}

@@ -1,87 +1,89 @@
-import os, asyncio, json, requests, urllib.parse
+import os
+import sys
+import asyncio
+import json
+import time
 from aiokafka import AIOKafkaProducer
-from src.config.config import RIOT_API_KEY
 from dotenv import load_dotenv
+from riotwatcher import RiotWatcher, LolWatcher
 
-load_dotenv()
+# Config paths
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
 
-REGION_ROUTING = "europe"
-MATCH_COUNT = 5
-FETCH_INTERVAL = int(os.getenv("FETCH_INTERVAL", 60))  # en segundos
-SUMMONER_NAME = os.getenv("SUMMONER_NAME", "PlayerName#EUW")
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP", "kafka:9092")
-TOPIC = "events_raw"
+# Cargar RIOT_API_KEY (solo desde config.py)
+from src.config.config import RIOT_API_KEY
+# Cargar variables del .env
+from src.config.env_config import get_env_config
 
-def get_puuid_from_riot_id(riot_id):
-    game_name, tag_line = riot_id.split("#")
-    encoded_name = urllib.parse.quote(game_name)
-    url = f"https://{REGION_ROUTING}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/{encoded_name}/{tag_line}"
-    headers = {"X-Riot-Token": RIOT_API_KEY}
-    res = requests.get(url, headers=headers)
-    res.raise_for_status()
-    data = res.json()
-    return data["puuid"], data["gameName"], data["tagLine"]
+print("=== Riot Fetcher Starting ===")
 
-def get_match_ids(puuid, count):
-    url = f"https://{REGION_ROUTING}.api.riotgames.com/lol/match/v5/matches/by-puuid/{puuid}/ids"
-    headers = {"X-Riot-Token": RIOT_API_KEY}
-    params = {"start": 0, "count": count}
-    res = requests.get(url, headers=headers, params=params)
-    res.raise_for_status()
-    return res.json()
+# Cargar variables de entorno del contenedor
+load_dotenv(dotenv_path="/app/.env")
 
-def get_match_summary(match_id, my_puuid):
-    url = f"https://{REGION_ROUTING}.api.riotgames.com/lol/match/v5/matches/{match_id}"
-    headers = {"X-Riot-Token": RIOT_API_KEY}
-    res = requests.get(url, headers=headers)
-    if res.status_code != 200:
-        return None
-    data = res.json()
-    summary = {
-        "match_id": match_id,
-        "gameMode": data['info']['gameMode'],
-        "duration": data['info']['gameDuration'],
-        "teams": {100: {"result": None, "players": []}, 200: {"result": None, "players": []}}
-    }
-    for p in data['info']['participants']:
-        tid = p['teamId']
-        if summary['teams'][tid]["result"] is None:
-            summary['teams'][tid]["result"] = "WIN" if p['win'] else "LOSE"
-        summary['teams'][tid]["players"].append({
-            "summoner": p['summonerName'],
-            "champion": p['championName'],
-            "kda": f"{p['kills']}/{p['deaths']}/{p['assists']}",
-            "is_you": p['puuid'] == my_puuid
-        })
-    return summary
+env = get_env_config()
+print("✔️ ENV VARS (desde env_config.py):")
+print(f"KAFKA_BOOTSTRAP_SERVERS = {env['KAFKA_BOOTSTRAP_SERVERS']}")
+print(f"SUMMONER_NAME = {env['SUMMONER_NAME']}")
 
-async def send_to_kafka(producer, data):
-    await producer.send_and_wait(TOPIC, json.dumps(data).encode())
+# Configuración
+API_KEY = RIOT_API_KEY
+SUMMONER_NAME = env["SUMMONER_NAME"]
+KAFKA_SERVERS = env["KAFKA_BOOTSTRAP_SERVERS"]
+TOPIC = "matches"
+REGION = "euw1"
+PLATFORM_ROUTING = "europe"
 
-async def main():
-    print("Starting Riot Fetcher...")
-    puuid, game_name, tag = get_puuid_from_riot_id(SUMMONER_NAME)
-    print(f"Tracking matches for {game_name}#{tag}")
-    producer = AIOKafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP)
-    await producer.start()
-    sent_ids = set()
+rw = RiotWatcher(API_KEY)      # <-- para Account
+lw = LolWatcher(API_KEY)      # <-- para LoL: match, summoner, etc
+
+if not SUMMONER_NAME or not KAFKA_SERVERS:
+    print("❌ SUMMONER_NAME o KAFKA_BOOTSTRAP_SERVERS no están definidos")
+    exit(1)
+
+print(f"Loaded config: Summoner={SUMMONER_NAME}, Kafka={KAFKA_SERVERS}")
+
+# Obtener PUUID desde el Riot ID
+def get_puuid():
     try:
+        game_name, tag_line = SUMMONER_NAME.split("#", 1)
+        account_info = rw.account.by_riot_id(PLATFORM_ROUTING, game_name, tag_line)
+        puuid = account_info['puuid']
+        print(f"✔️ PUUID obtenido: {puuid}")
+        return puuid
+    except Exception as e:
+        print(f"❌ Error obteniendo PUUID: {e}")
+        raise
+
+# Obtener partidas recientes
+def get_recent_matches(puuid):
+    try:
+        matches = lw.match.matchlist_by_puuid(PLATFORM_ROUTING, puuid, count=5)
+        print(f"✔️ Matches recientes: {matches}")
+        return matches
+    except Exception as e:
+        print(f"❌ Error obteniendo partidas: {e}")
+        return []
+
+# Main async loop
+async def main():
+    await asyncio.sleep(10)
+    producer = AIOKafkaProducer(bootstrap_servers=KAFKA_SERVERS)
+    await producer.start()
+    try:
+        print("✔️ Conectado a Kafka")
+
+        puuid = get_puuid()
+
         while True:
-            match_ids = get_match_ids(puuid, MATCH_COUNT)
-            new_matches = [mid for mid in match_ids if mid not in sent_ids]
-            if new_matches:
-                for mid in new_matches:
-                    summary = get_match_summary(mid, puuid)
-                    if summary:
-                        await send_to_kafka(producer, summary)
-                        sent_ids.add(mid)
-                        print(f"Sent match {mid} to Kafka")
-            else:
-                print("No new matches found.")
-            await asyncio.sleep(FETCH_INTERVAL)
+            matches = get_recent_matches(puuid)
+            for match_id in matches:
+                data = {"match_id": match_id, "timestamp": time.time()}
+                await producer.send_and_wait(TOPIC, json.dumps(data).encode("utf-8"))
+                print(f"📤 Enviado a Kafka: {data}")
+            await asyncio.sleep(60)
     finally:
         await producer.stop()
-        print("Fetcher stopped.")
 
 if __name__ == "__main__":
+    print("⏳ Iniciando loop principal...")
     asyncio.run(main())

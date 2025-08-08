@@ -1,0 +1,31 @@
+{
+  "$jsonSchema": {
+    "bsonType": "object",
+    "required": ["player_id", "summoner_name", "rank", "region"],
+    "properties": {
+      "player_id": {
+        "bsonType": "string",
+        "description": "Identificador único del jugador"
+      },
+      "summoner_name": {
+        "bsonType": "string",
+        "description": "Nombre del invocador"
+      },
+      "rank": {
+        "bsonType": "string",
+        "description": "Rango actual (e.g., Gold IV, Platinum I)"
+      },
+      "region": {
+        "bsonType": "string",
+        "description": "Región del jugador (e.g., EUW, NA)"
+      },
+      "champion_pool": {
+        "bsonType": "array",
+        "items": {
+          "bsonType": "string"
+        },
+        "description": "Lista de campeones más usados"
+      }
+    }
+  }
+}

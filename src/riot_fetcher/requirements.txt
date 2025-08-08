@@ -3,3 +3,4 @@ pymongo
 confluent-kafka
 python-dotenv
 aiokafka
+riotwatcher==3.3.1

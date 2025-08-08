@@ -1,0 +1,52 @@
+{
+  "$jsonSchema": {
+    "bsonType": "object",
+    "required": ["match_id", "game_mode", "start_time", "end_time", "duration", "teams", "players"],
+    "properties": {
+      "match_id": {
+        "bsonType": "string",
+        "description": "Identificador único de la partida"
+      },
+      "game_mode": {
+        "bsonType": "string",
+        "description": "Modo de juego (e.g., ranked, normal, aram)"
+      },
+      "start_time": {
+        "bsonType": "date",
+        "description": "Fecha y hora de inicio de la partida"
+      },
+      "end_time": {
+        "bsonType": "date",
+        "description": "Fecha y hora de finalización de la partida"
+      },
+      "duration": {
+        "bsonType": "int",
+        "description": "Duración en segundos"
+      },
+      "teams": {
+        "bsonType": "array",
+        "items": {
+          "bsonType": "object",
+          "required": ["team_id", "win", "objectives"],
+          "properties": {
+            "team_id": { "bsonType": "int" },
+            "win": { "bsonType": "bool" },
+            "objectives": {
+              "bsonType": "object",
+              "properties": {
+                "towers": { "bsonType": "int" },
+                "dragons": { "bsonType": "int" },
+                "barons": { "bsonType": "int" }
+              }
+            }
+          }
+        }
+      },
+      "players": {
+        "bsonType": "array",
+        "items": { "bsonType": "string" },
+        "description": "Lista de IDs de jugadores que participaron"
+      }
+    }
+  }
+}
