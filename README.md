@@ -1,19 +1,14 @@
 # TFM - Análisis en Tiempo Real de Partidas de Videojuegos Competitivos
 
-Este proyecto busca desarrollar un sistema de analítica en tiempo real para partidas de League of Legends, utilizando un stack de procesamiento basado en Kafka, MongoDB y servicios en contenedores para adquisición, ingestión y visualización de datos.
+Este proyecto implementa un sistema de **analítica en tiempo real** para League of Legends (LoL) usando:
+- **Apache Kafka** para la ingestión de datos
+- **MongoDB** para el almacenamiento
+- **Docker Compose** para orquestación de servicios
+- **Streamlit** para visualización en dashboard
+- Scripts de agregación y análisis con `mongosh`
 
 ---
 
-## 🎯 Objetivo
-
-Plataforma para:
-- Ingerir datos en tiempo real desde la **Riot API (LoL)**.
-- Publicar eventos en **Kafka** y consumirlos con **Python (aiokafka)**.
-- Persistirlos en **MongoDB**.
-- Mostrar métricas en un **dashboard (Streamlit)**.
-- Sentar bases para detección de eventos tácticos (reglas/ML ligero).
-
----
 
 ## 🧱 Arquitectura
 
@@ -60,6 +55,7 @@ Plataforma para:
 │ ├── dashboard/ 
 │ └── services/
 │     ├── ingestion/ 
+      ├── processing/
 │     └── riot_fetcher/
 ├── .env 
 ├── docs/ # Diagramas y documentación
@@ -68,337 +64,103 @@ Plataforma para:
 ├── Makefile # Comandos simplificados para levantar el entorno
 └── README.md # Este archivo
 ```
----
 
 ## 🚀 Puesta en marcha
 
-### 1) Prerrequisitos
-- Docker + Docker Compose
-- Clave válida de Riot Games
-
-### 2) Configuración
-Crea `src/config/config.py` (no versionado) con:
-```python
-RIOT_API_KEY = "TU_CLAVE_AQUI"
-```
-
-Este archivo está ignorado en `.gitignore` y debe crearse manualmente en cada entorno.
-💡 Puedes usar como plantilla el archivo de ejemplo:
-
-```plaintext
-src/config/config_example.py
-```
-
-Edita .env (o variables) para:
-
-````python
-SUMMONER_NAME="NOMBRE#TAG"
-KAFKA_BOOTSTRAP_SERVERS="kafka1:9092,kafka2:9093,kafka3:9094"
-````
-### 3) Levantar infraestructura
-
-```python
-docker compose up -d
-```
-
-### 4) Ver logs del fetcher
-
-```python
-docker logs -f final-riot-fetcher
-```
-
-Deberías ver:
-
-- PUUID resuelto
-- Últimas partidas (EUW1_xxxxx)
-- Mensajes producidos al tópico matches
-
-Nota: el tópico matches se autocrea. El primer envío puede mostrar “Topic … is not available during auto-create initialization”; es normal y se resuelve solo en segundos.
----
-## 📊 Datos y tópicos
-- Topic: matches 
-- Payload ejemplo:
-
-```python
-{"match_id": "EUW1_7485826231", "timestamp": 1754648870.0463}
-```
-- Colección Mongo (sugerida): lol.matches_raw
----
-## 🧰 Scripts útiles
-
-````python
-docker compose down -v           # parar y borrar volúmenes
-docker compose build --no-cache  # reconstruir imágenes
-docker logs -f final-riot-fetcher
-
-````
----
-## ⚡ Comandos Rápidos
-
-Antes de empezar, asegúrate de tener Docker y Make instalados.  
-En Windows puedes instalar `make` con:
+### 1️⃣ Clonar repositorio
 ```bash
-winget install GnuWin32.Make
+git clone <URL_REPOSITORIO>
+cd FINAL
 ```
 
-Levantar todos los servicios
+### 2️⃣ Levantar infraestructura
 ```bash
-make up
+docker compose up -d --build
 ```
 
-Ver logs
-```bash
-make logs
-```
-
-Apagar servicios
-```bash
-make down
-```
-
-Reiniciar todo y reconstruir imágenes
-```bash
-make reset
-```
-
-Verificar contenedores en ejectución
-```bash
-make ps
-```
-
-Re-crear tópicos Kafka
-```bash
-make recreate-topics
-```
-
-Probar productor de datos simulados
-```bash
-make producer-mock
-```
+Esto levanta:
+- **Zookeeper**
+- **Kafka (3 brokers)**
+- **MongoDB**
+- **Riot Fetcher** (productor de Kafka)
+- **Kafka Consumer**
+- **Streamlit Dashboard**
 
 ---
 
-## 🚀 Cómo ejecutar el proyecto
+## 📊 Scripts de consultas MongoDB
 
-1. **Clonar el repositorio**
-   ```bash
-   git clone https://github.com/laurasc14/TFM-LoL-RealTime-Analytics.git
-   cd TFM-LoL-RealTime-Analytics
-   ```
-2. **Levantar la infraestructura**
-    ```bash
-   make up
-   ```
-3. (Opcional) Incializar tópicos Kafka
-    ```bash
-   make init-topics
-   ```
-   
-4. (Opcional) Ejecutar productor mock
-    ```bash
-   make producer-mockhttps://github.com/laurasc14/TFM-LoL-RealTime-Analytics
-   ```
-
-5. Detener entorno
-    ```bash
-   make down
-   ```
-
----
-
-## 🔧 Comandos útiles
-**Crear un nuevo tópico:**
-   ```bash
-   docker exec -it kafka1 kafka-topics.sh --create --topic <nombre> --partitions 3 --replication-factor 3 --bootstrap-server kafka1:9092
-   ```
-**Probar productor/consumidor:**
-   ```bash
-   docker exec -it kafka1 kafka-console-producer.sh --broker-list kafka1:9092 --topic test
-   docker exec -it kafka1 kafka-console-consumer.sh --bootstrap-server kafka1:9092 --topic test --from-beginning
-   ```
-
----
-
-## 📊 Tópicos Kafka
-
-| Tópico        | Particiones | Replicación | Retención |
-| ------------- | ----------- | ----------- | --------- |
-| `lol-matches` | 6           | 3           | 7 días    |
-| `lol-players` | 6           | 3           | 7 días    |
-| `lol-events`  | 6           | 3           | 3 días    |
-
----
-## ✅ Estado actual (MVP)
-
-- ✔️ Productor Riot → Kafka operativo 
-- ✔️ Autocreación de tópico matches
-- ⏳ Consumer a Mongo (en progreso)
-- ⏳ Dashboard Streamlit (en progreso)
-- ⏳ Reglas/ML (siguientes iteraciones)
-
----
-
-## 🗺️ Roadmap corto
-
-- Consumer asíncrono → MongoDB 
-- Esquema y validaciones (pydantic)
-- Dashboard inicial (últimas partidas, filtros)
-- Enriquecimientos: duración, modo, equipos, KDA por jugador 
-- Reglas básicas (snowball/comeback)
-
----
-
-## 📚 Notas
-
-- Librería: riotwatcher >= 3.3.1 (no existe 3.2.6 en PyPI). 
-- Endpoints: Account (puuid) y Match (list/details) con routing europeo.
-
----
-
-## 📌 Validaciones recientes
-Tras la última ejecución del final-kafka-consumer, se realizaron pruebas y validaciones para confirmar la correcta ingestión y persistencia de datos en MongoDB desde Kafka.
-
-1. **Estado de la colección matches_raw**
-   ```bash
-   # Total de documentos
-   db.matches_raw.countDocuments()
-   ```
-Resultado:
-   ```bash
-  5
-   ```
-2. **Ejemplo de documentos almacenados**
-   ```bash
-   db.matches_raw.find(
-   {},
-   { _id: 0, match_id: 1, 'metadata.dataVersion': 1, 'info.gameDuration': 1 }
-   ).sort({ _id: -1 }).limit(3).toArray()
-   ```
-Resultado:
-   ```bash
-   [
-  {
-    "match_id": "EUW1_7488804638",
-    "info": { "gameDuration": 1709 },
-    "metadata": { "dataVersion": "2" }
-  },
-  {
-    "match_id": "EUW1_7488826864",
-    "info": { "gameDuration": 1138 },
-    "metadata": { "dataVersion": "2" }
-  },
-  {
-    "match_id": "EUW1_7488855596",
-    "info": { "gameDuration": 1712 },
-    "metadata": { "dataVersion": "2" }
-  }
-]
-  ````
-
-3. **Verificación de índices**
-  ```bash
-  db.matches_raw.getIndexes()
-  ```
-Resultado:
-   ````python
-   [
-  { "v": 2, "key": { "_id": 1 }, "name": "_id_" },
-  { "v": 2, "key": { "match_id": 1 }, "name": "ux_match_id", "unique": true }
-]
-   ````
-
-4. **Observaciones del consumer**
-- Conexión exitosa a Kafka y MongoDB. 
-- Se están realizando upserts correctamente:
-  - matched=1, modified=1 → documento encontrado y actualizado. 
-  - matched=1, modified=0 → documento encontrado, sin cambios.
-
-- No se han producido errores de pydantic ni de env_config tras ajustes de rutas y variables.
-
-- Algunos documentos iniciales podrían carecer de ciertos campos por:
-  - Partidas antiguas sin datos completos. 
-  - Fallos de red o límites de la API en el fetch inicial.
-
-El commit quedaría:
-````makefile
-docs: actualizar README con validaciones de MongoDB/Kafka y estado del consumer
-````
----
-
-## 📊 Consultas rápidas en MongoDB
-Este repositorio incluye consultas útiles para explorar los datos procesados.
-
-### 📁 Ubicación
-  ```bash
-  db_scripts/queries.js
-  ```
-### ▶️ Ejecutar las consultas dentro del contenedor de Mongo
-
-- Opción A) Copiar y ejecutar (rápida)
-
-````bash
-    # Desde la raíz del repo
-    docker cp db_scripts/queries.js final-mongo:/queries.js 
-    docker exec -it final-mongo mongosh "mongodb://admin:admin@mongo:27017/admin" /queries.js
-````
-
-- Opcion B) Volumen (persistente)
-Añade un volumen en docker-compose.yml:
+Ejemplo para ejecutar consultas de agregación:
 
 ```bash
-    mongo:
-    image: mongo:6.0
-    container_name: final-mongo
-    ports:
-      - "27017:27017"
-    volumes:
-      - ./db_scripts:/app/db_scripts
+docker cp db_scripts/queries_extended.js final-mongo:/queries_extended.js
+docker exec -it final-mongo mongosh "mongodb://admin:admin@mongo:27017/admin" /queries_extended.js
 ```
-Y ejecuta:
-```bash
-    docker exec -it final-mongo mongosh "mongodb://admin:admin@mongo:27017/admin" /app/db_scripts/queries.js
+
+Salida esperada:
 ```
---
-💡 PowerShell (Windows): si lanzas consultas inline con --eval, usa comillas simples por fuera y dobles dentro, o escapa $ con `. Con el archivo .js te ahorras el escape.
+🏆 Top 5 Campeones por KDA medio:
+[ { _id: 'Rengar', avgKDA: 19 }, ... ]
+
+🔥 Top 5 Invocadores por Winrate:
+[ { _id: 'TerribleLeafar#EUW', winrate: 100 }, ... ]
+
+⏱ Histograma de duración de partidas (min):
+[ { _id: 18, count: 1 }, ... ]
+```
+
 ---
-## 🧠 ¿Qué consultas trae?
 
-1. KDA medio por partida (orden descendente)
-   Descompone participantes por partida y calcula la media de kda por match_id. 
-   - Útil para detectar partidas con mayor impacto/eficiencia media.
+## 📈 Dashboard con Streamlit
 
-2. Top 5 jugadores por KDA (global)
-   Recorre todos los participantes y devuelve los 5 mejores kda con su nombre normalizado
-   (riotIdGameName#riotIdTagline). 
-   - Ambas consultas operan sobre la colección lol.matches_processed.
----
-### 🧾 Ejemplos de salida real
-
-KDA medio por partida
+### Construcción y despliegue
 ```bash
-[
-  { "_id": "EUW1_7490002206", "avgKDA": 3.4 },
-  { "_id": "EUW1_7488882698", "avgKDA": 3.9376 },
-  { "_id": "EUW1_7488855596", "avgKDA": 4.3315 }
-]
+docker compose up -d --build final-dashboard
 ```
-Top 5 KDAs individuales
-```bash
-[
-  { "name": "MEMENTO MØRI#FLASH", "kda": 19 },
-  { "name": "Talletus#EUW",       "kda": 17 },
-  { "name": "MEMENTO MØRI#FLASH", "kda": 14.5 },
-  { "name": "Gritzzki#EUW",       "kda": 13 },
-  { "name": "Agent K#007",        "kda": 9 }
-]
+
+Acceder en navegador:
 ```
+http://localhost:8501
+```
+
 ---
-### 🧩 Notas
 
-- Requiere que el pipeline de procesado haya poblado matches_processed (ver services/processing/matches_processor.py). 
-- Los nombres ya vienen normalizados desde el procesador: summonerName = riotIdGameName#riotIdTagline. 
-- Puedes adaptar fácilmente los pipelines para añadir filtros por campeón, modo de juego, fecha, etc.---
+## 🐳 Dockerfile del dashboard
 
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends     ca-certificates curl &&     rm -rf /var/lib/apt/lists/*
+
+COPY src/dashboard/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src/dashboard/dashboard_streamlit.py /app/dashboard_streamlit.py
+
+CMD ["streamlit", "run", "dashboard_streamlit.py", "--server.port=8501", "--server.address=0.0.0.0"]
+```
+
+---
+
+## 🔌 Variables de entorno relevantes
+
+En `docker-compose.yml`:
+```yaml
+environment:
+  MONGO_URI: mongodb://admin:admin@mongo:27017/lol?authSource=admin
+  MONGO_DB: lol
+  MONGO_PROCESSED_COLL: matches_processed
+```
+
+---
+
+## 📌 Notas
+- El sistema requiere **Docker Desktop** y **Python 3.11+** para desarrollo local.
+- Los contenedores deben estar en la misma red definida en `docker-compose.yml` (`tfm-net`).
+- La ingestión de datos de Riot API requiere una clave API válida.
+---
 
 ## Autor
 Proyecto desarrollado por Laura Solé como parte del Trabajo Fin de Máster, UCM.

@@ -112,6 +112,26 @@ services:
     networks:
       - tfm-net
 
+  final-dashboard:
+    build:
+      context: .
+      dockerfile: app/dashboard/Dockerfile
+    container_name: final-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      - MONGO_URI=mongodb://admin:admin@mongo:27017/lol?authSource=admin
+      - MONGO_DB=lol
+      - MONGO_PROCESSED_COLL=matches_processed
+    depends_on:
+      mongo:
+        condition: service_started
+    volumes:
+      - ./src/dashboard/dashboard_streamlit.py:/app/dashboard_streamlit.py:ro
+    networks:
+      - tfm-net
+
+
 networks:
   tfm-net:
     driver: bridge
