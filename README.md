@@ -58,8 +58,9 @@ Plataforma para:
 ├── src/
 │ ├── api/ 
 │ ├── dashboard/ 
-│ ├── ingestion/ 
-│ └── riot_fetcher/
+│ └── services/
+│     ├── ingestion/ 
+│     └── riot_fetcher/
 ├── .env 
 ├── docs/ # Diagramas y documentación
 ├── init-topics.sh # Script para inicializar tópicos Kafka
@@ -252,6 +253,76 @@ make producer-mock
 - Librería: riotwatcher >= 3.3.1 (no existe 3.2.6 en PyPI). 
 - Endpoints: Account (puuid) y Match (list/details) con routing europeo.
 
+---
+
+## 📌 Validaciones recientes
+Tras la última ejecución del final-kafka-consumer, se realizaron pruebas y validaciones para confirmar la correcta ingestión y persistencia de datos en MongoDB desde Kafka.
+
+1. **Estado de la colección matches_raw**
+   ```bash
+   # Total de documentos
+   db.matches_raw.countDocuments()
+   ```
+Resultado:
+   ```bash
+  5
+   ```
+2. **Ejemplo de documentos almacenados**
+   ```bash
+   db.matches_raw.find(
+   {},
+   { _id: 0, match_id: 1, 'metadata.dataVersion': 1, 'info.gameDuration': 1 }
+   ).sort({ _id: -1 }).limit(3).toArray()
+   ```
+Resultado:
+   ```bash
+   [
+  {
+    "match_id": "EUW1_7488804638",
+    "info": { "gameDuration": 1709 },
+    "metadata": { "dataVersion": "2" }
+  },
+  {
+    "match_id": "EUW1_7488826864",
+    "info": { "gameDuration": 1138 },
+    "metadata": { "dataVersion": "2" }
+  },
+  {
+    "match_id": "EUW1_7488855596",
+    "info": { "gameDuration": 1712 },
+    "metadata": { "dataVersion": "2" }
+  }
+]
+  ````
+
+3. **Verificación de índices**
+  ```bash
+  db.matches_raw.getIndexes()
+  ```
+Resultado:
+   ````python
+   [
+  { "v": 2, "key": { "_id": 1 }, "name": "_id_" },
+  { "v": 2, "key": { "match_id": 1 }, "name": "ux_match_id", "unique": true }
+]
+   ````
+
+4. **Observaciones del consumer**
+- Conexión exitosa a Kafka y MongoDB. 
+- Se están realizando upserts correctamente:
+  - matched=1, modified=1 → documento encontrado y actualizado. 
+  - matched=1, modified=0 → documento encontrado, sin cambios.
+
+- No se han producido errores de pydantic ni de env_config tras ajustes de rutas y variables.
+
+- Algunos documentos iniciales podrían carecer de ciertos campos por:
+  - Partidas antiguas sin datos completos. 
+  - Fallos de red o límites de la API en el fetch inicial.
+
+El commit quedaría:
+````makefile
+docs: actualizar README con validaciones de MongoDB/Kafka y estado del consumer
+````
 ---
 
 ## Autor
