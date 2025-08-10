@@ -1,134 +1,99 @@
-import os
-import json
 import logging
-from typing import Any, Dict, List
-
 from pymongo import MongoClient, UpdateOne
-from pymongo.errors import BulkWriteError
+from src.config.env_config import get_env_config
 
-LOG = logging.getLogger("processor")
-logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger("processor")
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://admin:admin@mongo:27017/lol?authSource=admin")
-DB_NAME = os.getenv("MONGO_DB", "lol")
-RAW_COLL = os.getenv("MONGO_COLL_RAW", "matches_raw")
-PROC_COLL = os.getenv("MONGO_COLL_PROCESSED", "matches_processed")
 
-def safe_get(d: Dict, path: List[str], default=None):
-    cur = d
-    for p in path:
-        if not isinstance(cur, dict) or p not in cur:
-            return default
-        cur = cur[p]
-    return cur
+def display_name(p):
+    """
+    Devuelve un nombre visible para el jugador.
+    Si summonerName está vacío, construye a partir de riotIdGameName + riotIdTagline.
+    """
+    name = (p.get("summonerName") or "").strip()
+    if name:
+        return name
+    g = (p.get("riotIdGameName") or "").strip()
+    t = (p.get("riotIdTagline") or "").strip()
+    if g and t:
+        return f"{g}#{t}"
+    if g:
+        return g
+    return p.get("puuid", "") or ""
 
-def transform(raw: Dict[str, Any]) -> Dict[str, Any]:
-    """Extrae un doc compacto para análisis."""
-    match_id = raw.get("match_id")
-    metadata = raw.get("metadata", {})
-    info = raw.get("info", {})
 
-    participants = info.get("participants", []) or []
-    proc_participants = []
-    for p in participants:
-        proc_participants.append({
-            "puuid": p.get("puuid"),
-            "summonerName": p.get("summonerName"),
-            "championName": p.get("championName"),
-            "teamId": p.get("teamId"),
-            "kills": p.get("kills"),
-            "deaths": p.get("deaths"),
-            "assists": p.get("assists"),
-            "win": p.get("win"),
-            "goldEarned": p.get("goldEarned"),
-            "totalDamageDealtToChampions": p.get("totalDamageDealtToChampions"),
-            "totalMinionsKilled": p.get("totalMinionsKilled"),
-            "neutralMinionsKilled": p.get("neutralMinionsKilled"),
-            "cs": (p.get("totalMinionsKilled", 0) + p.get("neutralMinionsKilled", 0)),
-            "kda": (
-                (p.get("kills", 0) + p.get("assists", 0)) / max(1, p.get("deaths", 0))
+def process_match(doc):
+    """
+    Procesa un documento raw y devuelve uno listo para matches_processed.
+    """
+    info = doc.get("info", {})
+    participants = [
+        {
+            "summonerName": display_name(p),
+            "championName": p.get("championName", ""),
+            "kills": p.get("kills", 0) or 0,
+            "deaths": p.get("deaths", 0) or 0,
+            "assists": p.get("assists", 0) or 0,
+            "win": bool(p.get("win", False)),
+            "teamId": p.get("teamId", None),
+            "kda": round(
+                (p.get("kills", 0) + p.get("assists", 0)) / (p.get("deaths", 0) or 1), 3
             ),
-            "role": p.get("role") or p.get("teamPosition"),
-        })
+        }
+        for p in info.get("participants", [])
+    ]
 
-    doc = {
-        "match_id": match_id,
-        "dataVersion": metadata.get("dataVersion"),
-        "gameId": info.get("gameId"),
-        "gameMode": info.get("gameMode"),
-        "queueId": info.get("queueId"),
-        "gameDuration": info.get("gameDuration"),
-        "gameStartTimestamp": info.get("gameStartTimestamp"),
-        "participants": proc_participants,
-        "teams": info.get("teams"),  # útil para victorias por teamId
+    return {
+        "match_id": doc.get("match_id", ""),
+        "gameMode": info.get("gameMode", ""),
+        "gameDuration": info.get("gameDuration", 0),
+        "participants": participants,
     }
-    return doc
 
-def is_complete(raw: Dict[str, Any]) -> bool:
-    """Filtro rápido para evitar guardar partidas muy incompletas."""
-    if "info" not in raw or "metadata" not in raw:
-        return False
-    info = raw["info"]
-    if "participants" not in info or not isinstance(info["participants"], list) or len(info["participants"]) == 0:
-        return False
-    # gameDuration y dataVersion suelen ser buenos indicadores
-    if "gameDuration" not in info or "dataVersion" not in raw.get("metadata", {}):
-        return False
-    return True
 
 def main():
-    LOG.info("Conectando a Mongo: %s", MONGO_URI)
-    cli = MongoClient(MONGO_URI)
-    db = cli[DB_NAME]
-    raw = db[RAW_COLL]
-    proc = db[PROC_COLL]
+    cfg = get_env_config()
+    mongo_uri = cfg["MONGO_URI"]
 
-    # índices
-    proc.create_index("match_id", unique=True)
-    proc.create_index("participants.puuid")
-    proc.create_index("gameMode")
-    proc.create_index("queueId")
+    log.info(f"Conectando a Mongo: {mongo_uri}")
+    cli = MongoClient(mongo_uri)
 
-    # lee en lotes
-    batch_size = int(os.getenv("PROC_BATCH", "500"))
-    cursor = raw.find({}, {"_id": 0}).batch_size(batch_size)
+    raw_coll = cli.lol.matches_raw
+    proc_coll = cli.lol.matches_processed
 
-    ops: List[UpdateOne] = []
-    total = 0
-    kept = 0
-    for doc in cursor:
-        total += 1
-        if not is_complete(doc):
+    bulk_ops = []
+    total_raw = 0
+    total_proc = 0
+    total_disc = 0
+
+    for doc in raw_coll.find({}):
+        total_raw += 1
+        if not doc.get("info") or not doc.get("metadata"):
+            total_disc += 1
             continue
-        kept += 1
-        compact = transform(doc)
-        ops.append(UpdateOne(
-            {"match_id": compact["match_id"]},
-            {"$set": compact},
-            upsert=True
-        ))
 
-        # ejecuta en lotes
-        if len(ops) >= batch_size:
-            try:
-                res = proc.bulk_write(ops, ordered=False)
-                LOG.info("bulk_write ok: upserted=%s modified=%s matched=%s",
-                         res.upserted_count, res.modified_count, res.matched_count)
-            except BulkWriteError as e:
-                LOG.warning("bulk_write con conflictos: %s", e.details.get("writeErrors"))
-            ops = []
+        processed = process_match(doc)
+        bulk_ops.append(
+            UpdateOne(
+                {"match_id": processed["match_id"]},
+                {"$set": processed},
+                upsert=True,
+            )
+        )
+        total_proc += 1
 
-    # cola final
-    if ops:
-        try:
-            res = proc.bulk_write(ops, ordered=False)
-            LOG.info("bulk_write fin: upserted=%s modified=%s matched=%s",
-                     res.upserted_count, res.modified_count, res.matched_count)
-        except BulkWriteError as e:
-            LOG.warning("bulk_write fin con conflictos: %s", e.details.get("writeErrors"))
+    if bulk_ops:
+        result = proc_coll.bulk_write(bulk_ops)
+        log.info(
+            f"bulk_write fin: upserted={len(result.upserted_ids)} "
+            f"modified={result.modified_count} matched={result.matched_count}"
+        )
 
-    LOG.info("Total raw=%s | procesadas=%s | descartadas=%s", total, kept, total - kept)
-    cli.close()
+    log.info(
+        f"Total raw={total_raw} | procesadas={total_proc} | descartadas={total_disc}"
+    )
+
 
 if __name__ == "__main__":
     main()

@@ -325,5 +325,80 @@ docs: actualizar README con validaciones de MongoDB/Kafka y estado del consumer
 ````
 ---
 
+## 📊 Consultas rápidas en MongoDB
+Este repositorio incluye consultas útiles para explorar los datos procesados.
+
+### 📁 Ubicación
+  ```bash
+  db_scripts/queries.js
+  ```
+### ▶️ Ejecutar las consultas dentro del contenedor de Mongo
+
+- Opción A) Copiar y ejecutar (rápida)
+
+````bash
+    # Desde la raíz del repo
+    docker cp db_scripts/queries.js final-mongo:/queries.js 
+    docker exec -it final-mongo mongosh "mongodb://admin:admin@mongo:27017/admin" /queries.js
+````
+
+- Opcion B) Volumen (persistente)
+Añade un volumen en docker-compose.yml:
+
+```bash
+    mongo:
+    image: mongo:6.0
+    container_name: final-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - ./db_scripts:/app/db_scripts
+```
+Y ejecuta:
+```bash
+    docker exec -it final-mongo mongosh "mongodb://admin:admin@mongo:27017/admin" /app/db_scripts/queries.js
+```
+--
+💡 PowerShell (Windows): si lanzas consultas inline con --eval, usa comillas simples por fuera y dobles dentro, o escapa $ con `. Con el archivo .js te ahorras el escape.
+---
+## 🧠 ¿Qué consultas trae?
+
+1. KDA medio por partida (orden descendente)
+   Descompone participantes por partida y calcula la media de kda por match_id. 
+   - Útil para detectar partidas con mayor impacto/eficiencia media.
+
+2. Top 5 jugadores por KDA (global)
+   Recorre todos los participantes y devuelve los 5 mejores kda con su nombre normalizado
+   (riotIdGameName#riotIdTagline). 
+   - Ambas consultas operan sobre la colección lol.matches_processed.
+---
+### 🧾 Ejemplos de salida real
+
+KDA medio por partida
+```bash
+[
+  { "_id": "EUW1_7490002206", "avgKDA": 3.4 },
+  { "_id": "EUW1_7488882698", "avgKDA": 3.9376 },
+  { "_id": "EUW1_7488855596", "avgKDA": 4.3315 }
+]
+```
+Top 5 KDAs individuales
+```bash
+[
+  { "name": "MEMENTO MØRI#FLASH", "kda": 19 },
+  { "name": "Talletus#EUW",       "kda": 17 },
+  { "name": "MEMENTO MØRI#FLASH", "kda": 14.5 },
+  { "name": "Gritzzki#EUW",       "kda": 13 },
+  { "name": "Agent K#007",        "kda": 9 }
+]
+```
+---
+### 🧩 Notas
+
+- Requiere que el pipeline de procesado haya poblado matches_processed (ver services/processing/matches_processor.py). 
+- Los nombres ya vienen normalizados desde el procesador: summonerName = riotIdGameName#riotIdTagline. 
+- Puedes adaptar fácilmente los pipelines para añadir filtros por campeón, modo de juego, fecha, etc.---
+
+
 ## Autor
 Proyecto desarrollado por Laura Solé como parte del Trabajo Fin de Máster, UCM.
