@@ -75,3 +75,11 @@ mongo:
 
 check-mongo:
 	docker exec -it final-mongo mongosh lol_realtime --eval "db.matches.find().pretty()"
+
+smoke:
+	docker compose ps
+	docker exec -it kafka1 /usr/bin/kafka-topics --bootstrap-server kafka1:9092 --describe --topic matches
+	docker logs --tail 50 final-riot-fetcher
+	docker logs --tail 50 final-kafka-consumer
+	docker exec -it final-mongo mongosh "mongodb://admin:admin@mongo:27017/admin" --eval "use('lol'); db.matches_raw.countDocuments()"
+	docker exec -it final-mongo mongosh "mongodb://admin:admin@mongo:27017/admin" --eval "use('lol'); db.matches_raw.find({}, {_id:0, match_id:1}).limit(5).toArray()"

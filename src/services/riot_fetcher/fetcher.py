@@ -65,7 +65,7 @@ def get_recent_matches(puuid):
         return []
 
 # Main async loop
-async def main():
+async def produce():
     await asyncio.sleep(10)
     producer = AIOKafkaProducer(bootstrap_servers=KAFKA_SERVERS)
     await producer.start()
@@ -84,6 +84,9 @@ async def main():
     finally:
         await producer.stop()
 
-if __name__ == "__main__":
+async def main_async():
+    await produce()
+
+def main():
     print("⏳ Iniciando loop principal...")
-    asyncio.run(main())
+    asyncio.run(main_async())

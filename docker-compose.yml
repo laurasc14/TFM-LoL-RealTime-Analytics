@@ -20,9 +20,31 @@ services:
     networks:
       - tfm-net
 
+  final-kafka-consumer:
+    build:
+      context: .
+      dockerfile: app/kafka_consumer/Dockerfile
+    container_name: final-kafka-consumer
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./src:/app/src
+    networks:
+      - tfm-net
+
   mongo:
     image: mongo:6.0
     container_name: final-mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin
+      MONGO_INITDB_DATABASE: lol
     restart: always
     ports:
       - 27017:27017

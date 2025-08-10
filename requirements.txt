@@ -4,3 +4,5 @@ confluent-kafka
 python-dotenv
 aiokafka
 riotwatcher>=3.2.6
+motor
+pydantic
