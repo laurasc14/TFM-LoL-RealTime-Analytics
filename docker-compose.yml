@@ -14,7 +14,9 @@ services:
     env_file:
       - .env
     environment:
-      - PYTHONUNBUFFERED=1
+      - RIOT_API_KEY="RGAPI-2d148fa7-7edc-44bd-ad3c-900a6d6af06d"
+      - SUMMONER_NAME=MEMENTO MØRI#提莫國王
+      - RIOT_REGION=europe
     volumes:
       - ./src:/app/src
     networks:
@@ -120,17 +122,39 @@ services:
     ports:
       - "8501:8501"
     environment:
-      - MONGO_URI=mongodb://admin:admin@mongo:27017/lol?authSource=admin
-      - MONGO_DB=lol
-      - MONGO_PROCESSED_COLL=matches_processed
+      MONGO_URI: mongodb://admin:admin@mongo:27017/lol?authSource=admin
+      MONGO_DB: lol
+      MONGO_PROCESSED_COLL: matches_processed
+      KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9093,kafka3:9094
+      KAFKA_TOPIC: matches
+      RIOT_API_KEY: ${RIOT_API_KEY}
     depends_on:
       mongo:
         condition: service_started
     volumes:
       - ./src/dashboard/dashboard_streamlit.py:/app/dashboard_streamlit.py:ro
+      - ./src:/app/src
     networks:
       - tfm-net
 
+  final-backfill-api:
+    build:
+      context: .
+      dockerfile: app/riot_fetcher/Dockerfile
+    container_name: final-backfill-api
+    environment:
+      - PYTHONPATH=/app/src
+      - KAFKA_BOOTSTRAP_SERVERS=kafka1:9092,kafka2:9093,kafka3:9094
+      # Opcional: fija aquí RIOT_API_KEY si quieres evitar pasarla desde la UI
+      # - RIOT_API_KEY=RGAPI-xxxx
+    command: >
+      sh -lc "uvicorn api.backfill_api:app --host 0.0.0.0 --port 8000"
+    depends_on:
+      - kafka1
+      - kafka2
+      - kafka3
+    ports:
+      - "8000:8000"
 
 networks:
   tfm-net:

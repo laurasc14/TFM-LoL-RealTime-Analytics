@@ -4,7 +4,7 @@ confluent-kafka
 python-dotenv
 aiokafka
 riotwatcher>=3.2.6
+motor
+pydantic
 fastapi==0.110.*
 uvicorn[standard]==0.29.*
-requests>=2.31
-pydantic>=2

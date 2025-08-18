@@ -3,3 +3,6 @@ pandas
 pymongo
 plotly
 python-dotenv
+riotwatcher
+confluent-kafka
+requests
