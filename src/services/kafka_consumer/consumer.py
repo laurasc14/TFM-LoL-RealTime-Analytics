@@ -8,7 +8,7 @@ from aiokafka import AIOKafkaConsumer
 from motor.motor_asyncio import AsyncIOMotorClient
 from riotwatcher import LolWatcher, ApiError
 
-from env_config import get_env_config
+from src.config.env_config import get_env_config
 
 LOG = logging.getLogger("consumer")
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
@@ -19,7 +19,7 @@ cfg = get_env_config()
 RIOT_API_KEY = cfg["RIOT_API_KEY"]
 RIOT_ROUTING = cfg.get("RIOT_ROUTING", "europe")  # por defecto europe (EUW/EUNE)
 
-KAFKA_BOOTSTRAP = cfg.get("KAFKA_BOOTSTRAP_SERVERS", "kafka1:9092,kafka2:9093,kafka3:9094")
+KAFKA_BOOTSTRAP = cfg.get("KAFKA_BOOTSTRAP_SERVERS", "final-kafka:9092")
 KAFKA_TOPIC = cfg.get("KAFKA_TOPIC", "matches")
 KAFKA_GROUP = cfg.get("KAFKA_GROUP_ID", "lol-consumer")
 

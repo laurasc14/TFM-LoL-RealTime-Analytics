@@ -1,0 +1,35 @@
+$yml = @"
+services:
+  final-mongo:
+    image: mongo:6
+    container_name: final-mongo-test
+    command: ["--auth"]
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: admin
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - tfm-net
+
+networks:
+  tfm-net:
+    external: true
+    name: tfm-net
+
+volumes:
+  mongo-data:
+    name: mongo-data
+"@
+
+# Guardar sin BOM (evita problemas de parseo)
+[System.IO.File]::WriteAllText("$PWD\compose-test.yml", $yml, (New-Object System.Text.UTF8Encoding($false)))
+
+# Validar el YAML ya resuelto
+docker compose -f .\compose-test.yml config
+
+# Arrancar solo Mongo de prueba
+docker compose -f .\compose-test.yml up -d
+
+# Ver logs para confirmar que arrancó
+docker compose -f .\compose-test.yml logs -f

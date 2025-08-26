@@ -1,5 +1,5 @@
 requests
-pymongo
+pymongo==4.8.0
 confluent-kafka
 python-dotenv
 aiokafka
@@ -8,4 +8,6 @@ motor
 pydantic
 fastapi==0.110.*
 uvicorn[standard]==0.29.*
-fastapi[all]
+pydantic-settings==2.7.*
+kafka-python==2.0.2
+python-dotenv==1.0.1

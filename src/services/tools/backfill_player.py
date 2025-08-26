@@ -10,7 +10,7 @@ from kafka import KafkaProducer
 import json
 
 # --- util Kafka (igual que en tu backfill actual) ---
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka1:9092,kafka2:9093,kafka3:9094")
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "final-kafka:9092")
 TOPIC = os.getenv("KAFKA_MATCHES_TOPIC", "matches")
 
 def get_producer():

@@ -1,27 +1,23 @@
+# src/config/env_config.py
 import os
-from dotenv import load_dotenv
-from src.config.config import RIOT_API_KEY as DEFAULT_RIOT_API_KEY
 
-KAFKA_BOOTSTRAP_SERVERS = os.getenv("KAFKA_BOOTSTRAP")
-SUMMONER_NAME = os.getenv("SUMMONER_NAME")
-MONGO_URI = os.getenv("MONGO_URI")
-MONGO_DB = os.getenv("MONGO_DB")
-
-load_dotenv()
-
-def get_env_config():
-    riot_key = os.getenv("RIOT_API_KEY", DEFAULT_RIOT_API_KEY)
+def get_env_config() -> dict:
+    """
+    Devuelve un diccionario con los valores de configuración.
+    PRIORIDAD: variables de entorno > defaults seguros (sin auth para Mongo).
+    Usa nombres alineados con los servicios Docker y el resto del código.
+    """
     return {
-        "RIOT_API_KEY": riot_key,  # 🔹 Siempre viene de config.py
-        "KAFKA_BOOTSTRAP_SERVERS": os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka1:9092,kafka2:9093,kafka3:9094"),
-        "SUMMONER_NAME": os.getenv("SUMMONER_NAME", "MEMENTO MØRI#FLASH"),
-        "TOPIC": os.getenv("TOPIC", "matches"),
-        "GROUP_ID": os.getenv("GROUP_ID", "lol-consumer"),
-        "MONGO_URI": os.getenv("MONGO_URI", "mongodb://admin:admin@mongo:27017/lol?authSource=admin"),
-        "MONGO_DB": os.getenv("MONGO_DB", "lol"),
-        "MONGO_COLLECTION": os.getenv("MONGO_COLLECTION", "matches_raw")
-    }
+        # Kafka
+        "KAFKA_BOOTSTRAP": os.getenv("KAFKA_BOOTSTRAP", "final-kafka:9092"),
+        "KAFKA_TOPIC": os.getenv("KAFKA_TOPIC", "matches"),
+        "GROUP_ID": os.getenv("GROUP_ID", "final-consumer"),
 
-print("✔️ ENV VARS (desde env_config.py):")
-print("KAFKA_BOOTSTRAP_SERVERS =", KAFKA_BOOTSTRAP_SERVERS)
-print("SUMMONER_NAME =", SUMMONER_NAME)
+        # Mongo (por defecto SIN autenticación)
+        "MONGO_URI": os.getenv("MONGO_URI", "mongodb://final-mongo:27017/lol"),
+        "MONGO_DB": os.getenv("MONGO_DB", "lol"),
+        "MONGO_COLL": os.getenv("MONGO_COLL", "matches"),
+
+        # Log level opcional
+        "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
+    }

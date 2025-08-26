@@ -1,41 +1,32 @@
-# src/ingestion/producer_mock.py
 import json
+import os
 import time
-import logging
 from kafka import KafkaProducer
-from kafka.errors import NoBrokersAvailable
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "final-kafka:9092")
+TOPIC = os.getenv("TOPIC", "matches")
 
-KAFKA_BROKER = "kafka1:9092"
-TOPIC = "matches"
+def main():
+    producer = KafkaProducer(
+        bootstrap_servers=BOOTSTRAP,
+        value_serializer=lambda v: json.dumps(v).encode("utf-8"),
+        api_version_auto_timeout_ms=5000,
+    )
+    print(f"[producer] conectado a {BOOTSTRAP}")
 
-# Intentar conectar con Kafka con reintentos
-for attempt in range(5):
-    try:
-        producer = KafkaProducer(
-            bootstrap_servers=[KAFKA_BROKER],
-            value_serializer=lambda v: json.dumps(v).encode('utf-8')
-        )
-        logging.info("Conectado a Kafka en %s", KAFKA_BROKER)
-        break
-    except NoBrokersAvailable:
-        logging.warning("Kafka no disponible. Reintentando (%d/5)...", attempt + 1)
-        time.sleep(5)
-else:
-    logging.error("No se pudo conectar a Kafka después de varios intentos.")
-    exit(1)
+    msgs = [
+        {"match_id": "001", "team1": "Azul", "team2": "Rojo", "winner": "Azul"},
+        {"match_id": "002", "team1": "Verde", "team2": "Amarillo", "winner": "Amarillo"},
+    ]
 
-# Mensajes mock
-mock_data = [
-    {"match_id": "001", "team1": "Azul", "team2": "Rojo", "winner": "Azul"},
-    {"match_id": "002", "team1": "Verde", "team2": "Amarillo", "winner": "Amarillo"},
-]
+    for m in msgs:
+        producer.send(TOPIC, m)
+        print(f"[producer] enviado a {TOPIC}: {m}")
+        time.sleep(2)
 
-for msg in mock_data:
-    producer.send(TOPIC, msg)
-    logging.info("Mensaje enviado a %s: %s", TOPIC, msg)
-    time.sleep(2)
+    producer.flush()
+    producer.close()
+    print("[producer] listo ✓")
 
-producer.flush()
-logging.info("Producción finalizada.")
+if __name__ == "__main__":
+    main()

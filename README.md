@@ -1,25 +1,23 @@
-# TFM - Análisis en Tiempo Real de Partidas de Videojuegos Competitivos
+# TFM - Análisis en Tiempo Real de Partidas de League of Legends
 
 Este proyecto implementa un sistema de **analítica en tiempo real** para League of Legends (LoL) usando:
 - **Apache Kafka** para la ingestión de datos
 - **MongoDB** para el almacenamiento
 - **Docker Compose** para orquestación de servicios
-- **Streamlit** para visualización en dashboard
-- Scripts de agregación y análisis con `mongosh`
+- **Streamlit** (opcional) para visualización en dashboard
 
 ---
-
 
 ## 🧱 Arquitectura
 
 ![Arquitectura del proyecto](./docs/arquitectura_lol_analytics.png)
 
-
-**Flujo:** Riot API → Kafka → Consumers/ETL → MongoDB → Dashboard
+**Flujo:** Riot API → Kafka → Consumers → MongoDB → Dashboard
 
 **Servicios (Docker Compose):**
-- `zookeeper` + `kafka[1..3]` – cluster Kafka
-- `final-riot-fetcher` – productor (RiotWatcher 3.3.x + aiokafka)
+- `final-riot-fetcher` – productor que obtiene `match_id` desde Riot API y los publica en Kafka
+- `final-kafka` – broker Kafka
+- `final-kafka-consumer` – consumer que guarda `match_id` en Mongo
 - `final-mongo` – base de datos
 - *(opcional)* `dashboard` – Streamlit
 
@@ -31,14 +29,12 @@ Este proyecto implementa un sistema de **analítica en tiempo real** para League
 |---------------|-----------------------------------|
 | **Docker**    | Contenedorización y orquestación  |
 | **Kafka**     | Streaming de datos                |
-| **Zookeeper** | Coordinación de Kafka             |
 | **MongoDB**   | Base de datos NoSQL               |
 | **Python**    | Servicios backend y procesadores  |
 | **Streamlit** | Dashboard interactivo             |
-| **FastAPI**   | Exposición de datos vía API REST  |
-| **Makefile**  | Simplificar la gestión del entorno|
+| **FastAPI**   | (opcional) API REST               |
 
---- 
+
 
 ## 📁 Estructura
 ```plaintext
@@ -79,87 +75,69 @@ docker compose up -d --build
 ```
 
 Esto levanta:
-- **Zookeeper**
-- **Kafka (3 brokers)**
+- **Kafka**
 - **MongoDB**
 - **Riot Fetcher** (productor de Kafka)
 - **Kafka Consumer**
-- **Streamlit Dashboard**
+- **(opcional) Streamlit Dashboard**
+
+### 3️⃣ Consultar Mongo
+```bash
+docker compose exec final-mongo mongosh --quiet "mongodb://final-mongo:27017/lol" --eval "db.matches.countDocuments()"
+docker compose exec final-mongo mongosh "mongodb://final-mongo:27017/lol" --eval "db.matches.findOne()"
+```
 
 ---
 
-## 📊 Scripts de consultas MongoDB
+## ✅ Cambios recientes
 
-Ejemplo para ejecutar consultas de agregación:
+- Eliminada autenticación en Mongo por defecto (ahora MONGO_URI simple).
+- Consumer (matches_service.py):
+  - Upsert por match_id (idempotente). 
+  - Índice único en match_id. 
+  - Manejo de DuplicateKeyError.
+- env_config.py y docker-compose.yml alineados con las variables de entorno.
+
+---
+
+## 🔄 Operaciones útiles
+
+- Reemitir matches (el fetcher vuelve a producir):
 
 ```bash
-docker cp db_scripts/queries_extended.js final-mongo:/queries_extended.js
-docker exec -it final-mongo mongosh "mongodb://admin:admin@mongo:27017/admin" /queries_extended.js
+docker compose restart final-riot-fetcher
 ```
 
-Salida esperada:
-```
-🏆 Top 5 Campeones por KDA medio:
-[ { _id: 'Rengar', avgKDA: 19 }, ... ]
+- Releer todo el topic desde el principio:
 
-🔥 Top 5 Invocadores por Winrate:
-[ { _id: 'TerribleLeafar#EUW', winrate: 100 }, ... ]
-
-⏱ Histograma de duración de partidas (min):
-[ { _id: 18, count: 1 }, ... ]
+```bash
+docker compose stop final-kafka-consumer
+docker compose exec final-kafka /opt/bitnami/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server final-kafka:9092 \
+  --group final-consumer --topic matches \
+  --reset-offsets --to-earliest --execute
+docker compose up -d final-kafka-consumer
 ```
 
 ---
 
-## 📈 Dashboard con Streamlit
+## 📈 Dashboard con Streamlit (opcional)
 
-### Construcción y despliegue
 ```bash
 docker compose up -d --build final-dashboard
 ```
 
-Acceder en navegador:
-```
+Accede en:
+```bash
 http://localhost:8501
 ```
 
 ---
 
-## 🐳 Dockerfile del dashboard
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends     ca-certificates curl &&     rm -rf /var/lib/apt/lists/*
-
-COPY src/dashboard/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY src/dashboard/dashboard_streamlit.py /app/dashboard_streamlit.py
-
-CMD ["streamlit", "run", "dashboard_streamlit.py", "--server.port=8501", "--server.address=0.0.0.0"]
-```
-
----
-
-## 🔌 Variables de entorno relevantes
-
-En `docker-compose.yml`:
-```yaml
-environment:
-  MONGO_URI: mongodb://admin:admin@mongo:27017/lol?authSource=admin
-  MONGO_DB: lol
-  MONGO_PROCESSED_COLL: matches_processed
-```
-
----
-
-## 📌 Notas
-- El sistema requiere **Docker Desktop** y **Python 3.11+** para desarrollo local.
-- Los contenedores deben estar en la misma red definida en `docker-compose.yml` (`tfm-net`).
-- La ingestión de datos de Riot API requiere una clave API válida.
+## 📌 Próximos pasos
+- Worker para descargar el JSON completo de cada partida (match.by_id) y guardarlo en matches_full. 
+- Añadir volumen a Mongo para persistir datos entre reinicios. 
+- Construir un dashboard o API FastAPI para consultar estadísticas.
 ---
 
 ## Autor

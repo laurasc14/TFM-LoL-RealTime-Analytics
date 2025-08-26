@@ -13,7 +13,7 @@ from aiokafka import AIOKafkaProducer
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("fetcher")
 
-KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "kafka1:9092,kafka2:9093,kafka3:9094")
+KAFKA_BOOTSTRAP = os.getenv("KAFKA_BOOTSTRAP_SERVERS", "final-kafka:9092")
 KAFKA_TOPIC = os.getenv("KAFKA_TOPIC", "matches")
 
 # ------------- helpers Riot (HTTP simple, sin riotwatcher) ------------------

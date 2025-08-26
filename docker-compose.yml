@@ -1,161 +1,86 @@
-version: '3.8'
-
 services:
+  final-mongo:
+    image: mongo:6
+    container_name: final-mongo
+    ports:
+      - "27017:27017"
+    networks: [final-net]
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 })"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
 
-  final-riot-fetcher:
-    build:
-      context: .
-      dockerfile: app/riot_fetcher/Dockerfile
-    container_name: final-riot-fetcher
-    depends_on:
-      - kafka1
-      - kafka2
-      - kafka3
-    env_file:
-      - .env
+  final-kafka:
+    image: bitnami/kafka:3.6
+    container_name: final-kafka
+    ports:
+      - "9092:9092"
     environment:
-      - RIOT_API_KEY="RGAPI-2d148fa7-7edc-44bd-ad3c-900a6d6af06d"
-      - SUMMONER_NAME=MEMENTO MØRI#提莫國王
-      - RIOT_REGION=europe
-    volumes:
-      - ./src:/app/src
-    networks:
-      - tfm-net
+      # KRaft single-node
+      - KAFKA_CFG_NODE_ID=1
+      - KAFKA_CFG_PROCESS_ROLES=broker,controller
+      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
+      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://final-kafka:9092
+      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
+      # Para single node, Bitnami usa localhost en el controlador; mantenlo así:
+      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@localhost:9093
+      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
+      - ALLOW_PLAINTEXT_LISTENER=yes
+    networks: [final-net]
+    healthcheck:
+      # Espera a que el broker atienda en 9092
+      test: ["CMD", "bash", "-lc", "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 50
+      start_period: 40s
 
   final-kafka-consumer:
     build:
       context: .
       dockerfile: app/kafka_consumer/Dockerfile
-    container_name: final-kafka-consumer
+    image: final-local/kafka-consumer:latest
+    env_file: .env
+    environment:
+      - MONGO_URI=mongodb://final-mongo:27017/lol
+      - MONGO_DB=lol
+      - MONGO_COLL=matches
+      - KAFKA_BOOTSTRAP=final-kafka:9092
+      - KAFKA_TOPIC=matches
+      - GROUP_ID=final-consumer
     depends_on:
-      - kafka1
-      - kafka2
-      - kafka3
-    env_file:
-      - .env
-    environment:
-      - PYTHONUNBUFFERED=1
-    volumes:
-      - ./src:/app/src
-    networks:
-      - tfm-net
-
-  mongo:
-    image: mongo:6.0
-    container_name: final-mongo
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: admin
-      MONGO_INITDB_ROOT_PASSWORD: admin
-      MONGO_INITDB_DATABASE: lol
-    restart: always
-    ports:
-      - 27017:27017
-    networks:
-      - tfm-net
-
-  zookeeper:
-    image: bitnami/zookeeper:3.8
-    container_name: zookeeper
-    environment:
-      - ALLOW_ANONYMOUS_LOGIN=yes
-    ports:
-      - "2181:2181"
-    networks:
-      - tfm-net
-
-  kafka1:
-    image: confluentinc/cp-kafka:7.2.1
-    container_name: kafka1
-    ports:
-      - "9092:9092"
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,DOCKER:PLAINTEXT
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    depends_on:
-      - zookeeper
-    networks:
-      - tfm-net
-
-  kafka2:
-    image: confluentinc/cp-kafka:7.2.1
-    container_name: kafka2
-    ports:
-      - "9093:9093"
-    environment:
-      KAFKA_BROKER_ID: 2
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka2:9093
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,DOCKER:PLAINTEXT
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9093
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    depends_on:
-      - zookeeper
-    networks:
-      - tfm-net
-
-  kafka3:
-    image: confluentinc/cp-kafka:7.2.1
-    container_name: kafka3
-    ports:
-      - "9094:9094"
-    environment:
-      KAFKA_BROKER_ID: 3
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka3:9094
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,DOCKER:PLAINTEXT
-      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9094
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    depends_on:
-      - zookeeper
-    networks:
-      - tfm-net
-
-  final-dashboard:
-    build:
-      context: .
-      dockerfile: app/dashboard/Dockerfile
-    container_name: final-dashboard
-    ports:
-      - "8501:8501"
-    environment:
-      MONGO_URI: mongodb://admin:admin@mongo:27017/lol?authSource=admin
-      MONGO_DB: lol
-      MONGO_PROCESSED_COLL: matches_processed
-      KAFKA_BOOTSTRAP_SERVERS: kafka1:9092,kafka2:9093,kafka3:9094
-      KAFKA_TOPIC: matches
-      RIOT_API_KEY: ${RIOT_API_KEY}
-    depends_on:
-      mongo:
+      final-kafka:
+        condition: service_healthy
+      final-mongo:
         condition: service_started
-    volumes:
-      - ./src/dashboard/dashboard_streamlit.py:/app/dashboard_streamlit.py:ro
-      - ./src:/app/src
-    networks:
-      - tfm-net
+    command: [ "python","-m","src.ingestion.consumer" ]
+    networks: [ final-net ]
 
-  final-backfill-api:
+  final-riot-fetcher:
     build:
       context: .
       dockerfile: app/riot_fetcher/Dockerfile
-    container_name: final-backfill-api
+    image: final-local/riot-fetcher:latest
+    env_file: .env
     environment:
-      - PYTHONPATH=/app/src
-      - KAFKA_BOOTSTRAP_SERVERS=kafka1:9092,kafka2:9093,kafka3:9094
-      # Opcional: fija aquí RIOT_API_KEY si quieres evitar pasarla desde la UI
-      # - RIOT_API_KEY=RGAPI-xxxx
-    command: >
-      sh -lc "uvicorn api.backfill_api:app --host 0.0.0.0 --port 8000"
+      - KAFKA_BOOTSTRAP=${KAFKA_BOOTSTRAP:-final-kafka:9092}
+      - TOPIC=${TOPIC:-matches}
+      - RIOT_API_KEY=${RIOT_API_KEY}
+      - SUMMONER_NAME=${SUMMONER_NAME}
+      - RIOT_REGION=${RIOT_REGION:-euw1}
+      - RIOT_REGIONAL_ROUTE=${RIOT_REGIONAL_ROUTE:-europe}
+      - POLL_INTERVAL_SECS=${POLL_INTERVAL_SECS:-20}
+      - MAX_MATCHES=${MAX_MATCHES:-5}
+      - PYTHONUNBUFFERED=1
     depends_on:
-      - kafka1
-      - kafka2
-      - kafka3
-    ports:
-      - "8000:8000"
+      final-kafka:
+        condition: service_healthy
+    command: [ "python","-m","src.ingestion.riot_fetcher" ]
+    networks: [ final-net ]
 
 networks:
-  tfm-net:
-    driver: bridge
+  final-net:
+    external: false

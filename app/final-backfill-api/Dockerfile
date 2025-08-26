@@ -1,18 +1,26 @@
-﻿FROM python:3.11-slim
+﻿# Imagen con Python y pip ya listo (evita el error "pip: not found")
+FROM python:3.11-slim
+
+# Evita bytecode y buffering
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# deps
+# Instala dependencias del sistema mínimas
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+# Copia requirements e instala
 COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# código
+# Copia el código
 COPY src ./src
 
-# que Python encuentre /app/src como raíz de paquetes
-ENV PYTHONPATH=/app/src
-
+# Expone el puerto
 EXPOSE 8000
 
-# OJO: ahora apuntamos a tools.backfill_api y le indicamos el app-dir
-CMD ["uvicorn", "tools.backfill_api:app", "--host", "0.0.0.0", "--port", "8000", "--app-dir", "/app/src"]
+# Lanza Uvicorn apuntando a src.api.main:app
+CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
