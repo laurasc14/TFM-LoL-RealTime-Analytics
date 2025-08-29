@@ -1,18 +1,16 @@
-import os
-import sys
-import subprocess
+# app/dashboard/app.py
+import os, subprocess, sys
 
-if __name__ == "__main__":
-    # Ruteo del fichero Streamlit dentro del repo
-    target = "src/dashboard/dashboard_streamlit.py"
+# Ruta ABS del dashboard real (multipágina) dentro del contenedor
+TARGET = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "src", "dashboard", "dashboard_streamlit.py"))
 
-    # Opcional: permitir puerto por env
-    port = os.getenv("STREAMLIT_PORT", "8501")
-    addr = os.getenv("STREAMLIT_ADDR", "0.0.0.0")
+if not os.path.exists(TARGET):
+    sys.stderr.write(f"[ERR] No encuentro el dashboard multipágina: {TARGET}\n")
+    sys.exit(1)
 
-    cmd = [
-        sys.executable, "-m", "streamlit", "run", target,
-        "--server.port", port,
-        "--server.address", addr,
-    ]
-    subprocess.run(cmd, check=True)
+# Opcional: forzar puerto/dirección si quieres sobreescribir
+PORT = os.environ.get("PORT", "8501")
+ADDR = os.environ.get("BIND_ADDR", "0.0.0.0")
+
+# Ejecuta Streamlit apuntando al archivo real (esto preserva multipágina)
+os.execvp("streamlit", ["streamlit", "run", TARGET, "--server.port", PORT, "--server.address", ADDR])

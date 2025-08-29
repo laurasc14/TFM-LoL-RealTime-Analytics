@@ -1,6 +1,12 @@
-# src/dashboard/dashboard_streamlit.py
-import os
-from pymongo import MongoClient
+import streamlit as st
 
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://appuser:appsecret@mongo:27017/lol?authSource=lol")
-client = MongoClient(MONGO_URI)
+st.set_page_config(page_title="LoL Dashboard", page_icon="🎮", layout="wide")
+
+st.sidebar.title("lol dashboard streamlit")
+st.sidebar.page_link("pages/01_Summoner_Search.py", label="Summoner Search", icon="🔎")
+st.sidebar.page_link("pages/02_Match_History.py", label="Match History", icon="🕒")
+st.sidebar.page_link("pages/03_Champion_Stats.py", label="Champion Stats", icon="📊")
+st.sidebar.page_link("pages/04_Live_Game.py", label="Live Game", icon="🟢")
+
+st.title("LoL Dashboard")
+st.write("Usa el menú de la izquierda para navegar.")

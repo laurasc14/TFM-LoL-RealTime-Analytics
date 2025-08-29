@@ -1,49 +1,15 @@
-db = db.getSiblingDB("lol_realtime");
+// init-mongo.js
+// Crea el usuario de la app en la DB correcta y mete un documento de salud.
+const dbName = 'lol_realtime';
+const appUser = 'app';
+const appPass = 'appsecret';
 
-// Matches
-db.createCollection("matches", {
-  validator: {
-    $jsonSchema: {
-      bsonType: "object",
-      required: ["match_id", "timestamp"],
-      properties: {
-        match_id: { bsonType: "int" },
-        team: { bsonType: "string" },
-        result: { bsonType: "string" },
-        timestamp: { bsonType: "date" }
-      }
-    }
-  }
+let db = db.getSiblingDB(dbName);
+
+db.createUser({
+  user: appUser,
+  pwd: appPass,
+  roles: [{ role: 'readWrite', db: dbName }],
 });
 
-// Players
-db.createCollection("players", {
-  validator: {
-    $jsonSchema: {
-      bsonType: "object",
-      required: ["player_id", "name"],
-      properties: {
-        player_id: { bsonType: "int" },
-        name: { bsonType: "string" },
-        role: { bsonType: "string" }
-      }
-    }
-  }
-});
-
-// Events
-db.createCollection("events", {
-  validator: {
-    $jsonSchema: {
-      bsonType: "object",
-      required: ["event_id", "match_id", "timestamp"],
-      properties: {
-        event_id: { bsonType: "int" },
-        match_id: { bsonType: "int" },
-        type: { bsonType: "string" },
-        description: { bsonType: "string" },
-        timestamp: { bsonType: "date" }
-      }
-    }
-  }
-});
+db.health.insertOne({ ok: true, when: new Date() });

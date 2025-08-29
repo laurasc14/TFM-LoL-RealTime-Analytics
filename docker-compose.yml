@@ -1,38 +1,59 @@
+name: final
+
 services:
   final-mongo:
-    image: mongo:6
+    image: mongo:7.0
     container_name: final-mongo
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_INITDB_ROOT_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_INITDB_DATABASE}
+      MONGO_APP_USER: ${MONGO_APP_USER}
+      MONGO_APP_PASS: ${MONGO_APP_PASS}
+    command: ["mongod", "--bind_ip", "*", "--auth"]
     ports:
       - "27017:27017"
-    networks: [final-net]
+    volumes:
+      - mongo-data:/data/db
+      # ATENCIÓN: aquí montamos el **archivo** init-mongo.js del host
+      - ./docker/mongo/init/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ ping: 1 })"]
+      test: [ "CMD","mongosh","--quiet",
+              "mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@localhost:27017/admin?authSource=admin",
+              "--eval","db.runCommand({ ping: 1 }).ok" ]
       interval: 5s
       timeout: 5s
-      retries: 40
-      start_period: 10s
+      retries: 30
+    networks: [ final-net ]
+
+  final-zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: final-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - final-net
 
   final-kafka:
-    image: bitnami/kafka:3.6
+    image: confluentinc/cp-kafka:7.5.0
     container_name: final-kafka
+    depends_on:
+      - final-zookeeper
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: final-zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://final-kafka:9092,PLAINTEXT_HOST://localhost:9094
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     ports:
       - "9092:9092"
-    environment:
-      # KRaft single-node
-      - KAFKA_CFG_NODE_ID=1
-      - KAFKA_CFG_PROCESS_ROLES=broker,controller
-      - KAFKA_CFG_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093
-      - KAFKA_CFG_ADVERTISED_LISTENERS=PLAINTEXT://final-kafka:9092
-      - KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP=PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
-      - KAFKA_CFG_CONTROLLER_LISTENER_NAMES=CONTROLLER
-      # Para single node, Bitnami usa localhost en el controlador; mantenlo así:
-      - KAFKA_CFG_CONTROLLER_QUORUM_VOTERS=1@localhost:9093
-      - KAFKA_CFG_INTER_BROKER_LISTENER_NAME=PLAINTEXT
-      - ALLOW_PLAINTEXT_LISTENER=yes
-    networks: [final-net]
+      - "9094:9094"
+    networks: [ final-net ]
     healthcheck:
-      # Espera a que el broker atienda en 9092
-      test: ["CMD", "bash", "-lc", "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      test: [ "CMD", "bash", "-lc", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1" ]
       interval: 5s
       timeout: 5s
       retries: 50
@@ -42,45 +63,52 @@ services:
     build:
       context: .
       dockerfile: app/kafka_consumer/Dockerfile
-    image: final-local/kafka-consumer:latest
+    container_name: final-kafka-consumer
     env_file: .env
-    environment:
-      - MONGO_URI=mongodb://final-mongo:27017/lol
-      - MONGO_DB=lol
-      - MONGO_COLL=matches
-      - KAFKA_BOOTSTRAP=final-kafka:9092
-      - KAFKA_TOPIC=matches
-      - GROUP_ID=final-consumer
     depends_on:
-      final-kafka:
-        condition: service_healthy
-      final-mongo:
-        condition: service_started
-    command: [ "python","-m","src.ingestion.consumer" ]
+      - final-kafka
+      - final-mongo
     networks: [ final-net ]
+    restart: unless-stopped
 
-  final-riot-fetcher:
+  final-match-expander:
     build:
       context: .
-      dockerfile: app/riot_fetcher/Dockerfile
-    image: final-local/riot-fetcher:latest
+      dockerfile: app/match-expander/Dockerfile
+    container_name: final-match-expander
     env_file: .env
-    environment:
-      - KAFKA_BOOTSTRAP=${KAFKA_BOOTSTRAP:-final-kafka:9092}
-      - TOPIC=${TOPIC:-matches}
-      - RIOT_API_KEY=${RIOT_API_KEY}
-      - SUMMONER_NAME=${SUMMONER_NAME}
-      - RIOT_REGION=${RIOT_REGION:-euw1}
-      - RIOT_REGIONAL_ROUTE=${RIOT_REGIONAL_ROUTE:-europe}
-      - POLL_INTERVAL_SECS=${POLL_INTERVAL_SECS:-20}
-      - MAX_MATCHES=${MAX_MATCHES:-5}
-      - PYTHONUNBUFFERED=1
     depends_on:
-      final-kafka:
-        condition: service_healthy
-    command: [ "python","-m","src.ingestion.riot_fetcher" ]
+      - final-kafka
+      - final-mongo
     networks: [ final-net ]
+    restart: unless-stopped
+
+  final-dashboard:
+    build:
+      context: .
+      dockerfile: app/dashboard/Dockerfile
+    container_name: final-dashboard
+    depends_on:
+      - final-mongo
+    env_file:
+      - .env
+    environment:
+      - MONGO_URI=${MONGO_URI}
+      - MONGO_DB=${MONGO_INITDB_DATABASE}
+      - RIOT_API_KEY=${RIOT_API_KEY}
+      - PYTHONPATH=/app:/app/src
+    ports:
+      - "8501:8501"
+    networks:
+      - final-net
+    command: >
+      streamlit run /app/src/dashboard/dashboard_streamlit.py
+      --server.port=8501 --server.address=0.0.0.0
+    restart: unless-stopped
+
+volumes:
+  mongo-data:
 
 networks:
   final-net:
-    external: false
+    driver: bridge

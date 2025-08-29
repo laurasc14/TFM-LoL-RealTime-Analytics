@@ -15,8 +15,9 @@ logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 
 cfg = get_env_config()
 
-# 🔑 API key SOLO viene de config.py (get_env_config ya la importa de ahí)
-RIOT_API_KEY = cfg["RIOT_API_KEY"]
+# 🔑 API key
+RIOT_API_KEY = os.getenv("RIOT_API_KEY") or cfg.get("RIOT_API_KEY")
+
 RIOT_ROUTING = cfg.get("RIOT_ROUTING", "europe")  # por defecto europe (EUW/EUNE)
 
 KAFKA_BOOTSTRAP = cfg.get("KAFKA_BOOTSTRAP_SERVERS", "final-kafka:9092")
