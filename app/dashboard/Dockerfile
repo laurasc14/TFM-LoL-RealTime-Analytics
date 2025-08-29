@@ -1,18 +1,25 @@
+# src/dashboard/Dockerfile
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Dependencias del sistema (certs/ca y curl por si lo necesitas)
+# dependencias del sistema mínimas (añade más si alguna lib lo pide)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl && \
+    build-essential curl && \
     rm -rf /var/lib/apt/lists/*
 
-# Requisitos de Python (usa el requirements.txt que tienes en src/dashboard)
-COPY src/dashboard/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# copia e instala requirements del dashboard
+COPY src/dashboard/requirements.txt /app/src/dashboard/requirements.txt
+RUN pip install --no-cache-dir -r /app/src/dashboard/requirements.txt
 
-# Copiamos el script del dashboard
-COPY src/dashboard/dashboard_streamlit.py /app/dashboard_streamlit.py
+# copia el proyecto (ajusta si tu código usa más carpetas)
+COPY src /app/src
 
+# streamlit en puerto 8501
 EXPOSE 8501
-CMD ["streamlit", "run", "dashboard_streamlit.py", "--server.port=8501", "--server.address=0.0.0.0"]
+
+# evita que streamlit se queje de no-interactivo
+ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+
+# <- tu app de Streamlit
+CMD ["streamlit","run","/app/src/dashboard/dashboard_streamlit.py","--server.port","8501","--server.address","0.0.0.0"]

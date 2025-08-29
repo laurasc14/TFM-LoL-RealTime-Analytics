@@ -1,16 +1,18 @@
-﻿FROM python:3.11-slim
-WORKDIR /app
+﻿# syntax=docker/dockerfile:1.6
+FROM python:3.11-slim
 
-COPY requirements.txt ./requirements.txt
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app:/app/src
+
+# Requisitos específicos del consumer
+# (ajusta la ruta si tu requirements está en otro sitio)
+COPY src/services/kafka_consumer/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Código
+# Código común y de servicio
 COPY src ./src
 COPY app/kafka_consumer/app.py ./app.py
 
-# Módulo env_config en su ruta real ➜ /app/env_config.py
-COPY src/config/env_config.py ./env_config.py
-
-ENV PYTHONUNBUFFERED=1
-ENV PYTHONPATH=/app:/app/src
-CMD ["python", "app.py"]
+CMD ["python","-u","app.py"]

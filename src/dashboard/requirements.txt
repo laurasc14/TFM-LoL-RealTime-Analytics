@@ -1,8 +1,5 @@
-streamlit
-pandas
-pymongo
-plotly
-python-dotenv
-riotwatcher
-confluent-kafka
-requests
+streamlit>=1.36
+pymongo>=4.6
+pandas>=2.2
+riotwatcher>=3.2
+requests>=2.31
