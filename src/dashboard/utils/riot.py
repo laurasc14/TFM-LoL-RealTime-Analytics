@@ -1,12 +1,13 @@
 from __future__ import annotations
+from pymongo import MongoClient
 
 import os
 import time
 import random
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
-
 import requests
+import json
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Excepciones
@@ -87,6 +88,49 @@ QUEUES: Dict[str, Optional[int]] = {
 
 def queue_label_to_id(label: str) -> Optional[int]:
     return QUEUES.get(label)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Conexión a MongoDB
+# ──────────────────────────────────────────────────────────────────────────────
+
+client = MongoClient("mongodb://localhost:27017/")
+db = client["your_database"]
+collection = db["summoner_profiles"]
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Conexión e interacción con la base de datos MongoDB
+# ──────────────────────────────────────────────────────────────────────────────
+
+def get_user_profile(user_id: str) -> Dict[str, Any]:
+    """Obtiene el perfil del invocador desde la base de datos"""
+    user_profile = collection.find_one({"user_id": user_id})
+    return user_profile
+
+def update_user_profile(user_id: str, user_profile: Dict[str, Any]) -> None:
+    """Actualiza el perfil del invocador en la base de datos"""
+    collection.update_one({"user_id": user_id}, {"$set": user_profile}, upsert=True)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cargar campeones
+# ──────────────────────────────────────────────────────────────────────────────
+
+def load_champions() -> dict:
+    # Ruta robusta: relativa a riot.py, funciona local y en Docker
+    file_path = os.path.join(os.path.dirname(__file__), "../data/champions.json")
+    if not os.path.exists(file_path):
+        raise FileNotFoundError(f"No se encuentra champions.json en {file_path}")
+    with open(file_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+        champions = {int(champ['key']): champ['id'] for champ in data['data'].values()}
+    return champions
+
+# Función para obtener la URL de la imagen del campeón
+def get_champion_image(champion_id: int, champions: dict) -> str:
+    """Devuelve la URL de la imagen del campeón."""
+    champion_name = champions.get(champion_id)
+    if champion_name:
+        return f"http://ddragon.leagueoflegends.com/cdn/12.15.1/img/champion/{champion_name}.png"
+    return ""
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Internos HTTP
@@ -193,6 +237,37 @@ def summoner_by_puuid(platform: str, puuid: str) -> Dict[str, Any]:
     return _get(url)
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Actualización del Nombre y Partidas
+# ──────────────────────────────────────────────────────────────────────────────
+
+def update_summoner_profile(user_id: str, new_name: str):
+    """Actualizar el nombre y asociar las partidas del nuevo nombre."""
+    # Obtén los datos del invocador desde Riot
+    summoner_data = summoner_by_name("na1", new_name)
+
+    # Obtener el perfil del usuario desde tu base de datos
+    user_profile = get_user_profile(user_id)
+
+    # Si el nombre ha cambiado, guardamos el nombre anterior en el historial
+    if user_profile['current_name'] != new_name:
+        if 'previous_names' not in user_profile:
+            user_profile['previous_names'] = []  # Si no existe, creamos la lista
+        user_profile['previous_names'].append(user_profile['current_name'])
+
+        # Actualizamos el nombre
+        user_profile['current_name'] = new_name
+
+        # Obtener las partidas del invocador
+        match_history = matches_by_puuid(summoner_data['puuid'], "na1")
+        user_profile['games'] = match_history
+
+        # Actualizar los datos en la base de datos MongoDB
+        update_user_profile(user_id, user_profile)  # Usamos la función correcta para actualizar
+        print(f"Nombre actualizado a {new_name} y partidas asociadas.")
+    else:
+        print("El nombre no ha cambiado.")
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Match-V5
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -219,14 +294,13 @@ def match_by_id(platform: str, match_id: str) -> Dict[str, Any]:
     url = f"{host}/lol/match/v5/matches/{match_id}"
     return _get(url)
 
-def find_participant_by_puuid(match: Dict[str, Any], puuid: str) -> Optional[Dict[str, Any]]:
-    try:
-        for p in match["info"]["participants"]:
-            if p.get("puuid") == puuid:
-                return p
-    except Exception:
-        pass
+def find_participant_by_puuid(match_info: dict, user_id: str) -> dict:
+    """Busca un participante en una partida utilizando su PUUID."""
+    for participant in match_info.get("info", {}).get("participants", []):
+        if participant.get("puuid") == user_id:
+            return participant
     return None
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Spectator
