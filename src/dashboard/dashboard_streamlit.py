@@ -1,29 +1,69 @@
 import streamlit as st
 
+# --- Importa las páginas ---
+from src.dashboard.pages import _00_Home as home
 from src.dashboard.pages import _01_Summoner_Search as summoner_search
 from src.dashboard.pages import _02_Match_History as match_history
 from src.dashboard.pages import _03_Champion_Stats as champion_stats
 from src.dashboard.pages import _04_Live_Game as live_game
 
+# --- Configuración general de la app (solo aquí) ---
+st.set_page_config(page_title="LoL Dashboard", page_icon="🎮", layout="wide")
 
-# Configuración general de la página
-st.set_page_config(
-    page_title="LoL Dashboard",
-    page_icon="🎮",
-    layout="wide"
-)
+# --- Estado inicial global ---
+if "current_page" not in st.session_state:
+    st.session_state["current_page"] = "Home"
+if "theme" not in st.session_state:
+    st.session_state["theme"] = "dark"  # "dark" | "light"
+if "dd_version" not in st.session_state:
+    st.session_state["dd_version"] = "14.18.1"
 
-# Selector de páginas
+# ⚠️ Consumir navegación solicitada por la Home ANTES de instanciar el radio
+if "__go_to" in st.session_state:
+    st.session_state["current_page"] = st.session_state["__go_to"]
+    del st.session_state["__go_to"]
+
+# --- Estilos globales suaves ---
+st.markdown("""
+    <style>
+        .dataframe {
+            border-radius: 10px;
+            border: 1px solid #2a2a2a;
+            padding: 10px;
+            background-color: rgba(255,255,255,.02);
+        }
+        .dataframe th {
+            background-color: #0b5aa3;
+            color: white;
+            font-weight: 600;
+        }
+        .dataframe td {
+            color: #e7e7e7;
+            padding: 8px 10px;
+        }
+        .stButton>button {
+            background-color: #0b5aa3;
+            color: white;
+            border-radius: 10px;
+            font-weight: 600;
+            border: 0;
+        }
+        .stButton>button:hover { background-color: #0f73d1; }
+    </style>
+""", unsafe_allow_html=True)
+
+# --- Sidebar / navegación ---
 page = st.sidebar.radio(
     "Selecciona una página:",
-    ["Dashboard", "Summoner Search", "Match History", "Champion Stats", "Live Game"],
-    index=0
+    ["Home", "Summoner Search", "Match History", "Champion Stats", "Live Game"],
+    index=["Home", "Summoner Search", "Match History", "Champion Stats", "Live Game"]
+          .index(st.session_state["current_page"]),
+    key="current_page",
 )
 
-# Mostrar solo la página seleccionada
-if page == "Dashboard":
-    st.title("LoL Dashboard")
-    st.write("Usa el menú de la izquierda para navegar.")
+# --- Router ---
+if page == "Home":
+    home.main()
 elif page == "Summoner Search":
     summoner_search.main()
 elif page == "Match History":
@@ -32,43 +72,3 @@ elif page == "Champion Stats":
     champion_stats.main()
 elif page == "Live Game":
     live_game.main()
-
-def main():
-    st.title("League of Legends Dashboard")
-
-# Estilo general para el dashboard
-st.markdown("""
-    <style>
-        /* Estilo para las tablas */
-        .dataframe {
-            border-radius: 10px;
-            border: 1px solid #ddd;
-            padding: 10px;
-            background-color: #f5f5f5;
-        }
-        .dataframe th {
-            background-color: #005A9C;
-            color: white;
-            font-weight: bold;
-        }
-        .dataframe td {
-            color: #333;
-            padding: 10px;
-        }
-        .stButton>button {
-            background-color: #005A9C;
-            color: white;
-            border-radius: 8px;
-            font-weight: bold;
-        }
-        .stButton>button:hover {
-            background-color: #007ACC;
-        }
-        /* Títulos y secciones */
-        .title {
-            font-size: 24px;
-            font-weight: bold;
-            color: #005A9C;
-        }
-    </style>
-""", unsafe_allow_html=True)

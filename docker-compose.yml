@@ -3,6 +3,7 @@ name: final
 services:
   final-mongo:
     image: mongo:7.0
+    restart: always
     container_name: final-mongo
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_INITDB_ROOT_USERNAME}
@@ -27,15 +28,15 @@ services:
     networks: [ final-net ]
 
   final-zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    container_name: final-zookeeper
+    image: confluentinc/cp-zookeeper:7.6.1
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-    ports:
-      - "2181:2181"
-    networks:
-      - final-net
+    healthcheck:
+      test: [ "CMD", "echo", "ruok", "|", "nc", "localhost", "2181" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
   final-kafka:
     image: confluentinc/cp-kafka:7.5.0

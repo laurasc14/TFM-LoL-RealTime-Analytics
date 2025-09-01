@@ -1,138 +1,168 @@
-from collections import defaultdict
-from typing import Optional, Dict, Any, List
-import pandas as pd
+from __future__ import annotations
+from typing import Dict, Any, List, Optional
 import streamlit as st
+import math
+from collections import defaultdict
 
 from src.dashboard.utils.riot import (
     matches_by_puuid,
     match_by_id,
-    find_participant_by_puuid,
-    queue_label_to_id,
     QUEUES,
-    RiotError,
-    NotFound,
-    season_to_date_start_timestamp,
     load_champions,
     get_champion_image,
+    season_to_date_start_timestamp,
 )
+
+def _safe_div(a: float, b: float) -> float:
+    return 0.0 if b == 0 else a / b
+
+def _fmt2(x: float) -> float:
+    # Para dataframe, mejor número plano (Streamlit ya formatea)
+    return round(x, 2)
 
 def main():
     st.set_page_config(page_title="Champion Stats", layout="wide")
-    st.title("Champion Stats  ↪")
+    st.title("Champion Stats")
 
+    # --- CSS para legibilidad (tema oscuro) ---
+    st.markdown("""
+    <style>
+    /* Más contraste en tablas y textos */
+    [data-testid="stTable"] thead tr th,
+    [data-testid="stTable"] tbody tr td {
+        color: #f0f4f8 !important;
+        font-size: 14px !important;
+    }
+    .stDataFrame, .stTable, .stMarkdown {
+        color: #f0f4f8 !important;
+    }
+    .divider {height: 6px; background: linear-gradient(90deg,#0b2239,#143d5c); border-radius: 4px; margin: 8px 0 12px;}
+    </style>
+    """, unsafe_allow_html=True)
+
+    # --- Comprobar invocador en sesión ---
     summ = st.session_state.get("summoner")
     if not summ:
-        st.info("Primero busca un invocador; se guardará en la sesión.")
+        st.info("Primero busca un invocador en la página **Summoner Search**.")
         st.stop()
 
-    region = summ.get("region")
-    puuid = summ.get("puuid")
+    region: str = summ.get("region")
+    puuid: str = summ.get("puuid")
+    if not (region and puuid):
+        st.warning("Faltan datos del invocador (region/puuid). Vuelve a buscarlo en Summoner Search.")
+        st.stop()
 
-    col_a, col_b = st.columns([2, 1])
-    with col_a:
-        queue_label = st.selectbox("Cola", list(QUEUES.keys()), index=0)
-    with col_b:
-        use_s2d = st.checkbox("Usar temporada (Season-to-date)", value=False)
+    # --- Filtros ---
+    top = st.columns([3, 1, 1])
+    with top[0]:
+        queue_label = st.selectbox("Cola", list(QUEUES.keys()), index=1)  # por defecto Solo/Dúo
+        queue_id = QUEUES[queue_label]
+    with top[1]:
+        use_season = st.checkbox("Usar temporada (Season-to-date)", value=False)
+    with top[2]:
+        n_matches = st.slider("Nº de partidas a analizar", min_value=10, max_value=100, value=50, step=10)
 
-    n = st.slider("Nº de partidas a analizar", min_value=10, max_value=100, value=100)
+    st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
 
-    queue_id = queue_label_to_id(queue_label)
-    start_time = season_to_date_start_timestamp() if use_s2d else None
-
-    champions_dict = load_champions()
-
-    @st.cache_data(show_spinner=False, ttl=300)
-    def _cached_ids(region: str, puuid: str, count: int, queue: Optional[int], start_time: Optional[int]) -> List[str]:
-        return matches_by_puuid(puuid, region, count=count, queue=queue, start_time=start_time)
-
-    @st.cache_data(show_spinner=False, ttl=600)
-    def _cached_match(region: str, match_id: str) -> Dict[str, Any]:
-        return match_by_id(region, match_id)
-
+    # --- Obtener IDs de partidas ---
+    start_ts: Optional[int] = season_to_date_start_timestamp() if use_season else None
     try:
-        ids = _cached_ids(region, puuid, n, queue_id, start_time)
-    except RiotError as e:
-        st.error(str(e))
+        match_ids: List[str] = matches_by_puuid(
+            puuid, region, count=n_matches, queue=queue_id, start_time=start_ts
+        )
+    except Exception as e:
+        st.error(f"No se pudieron obtener partidas: {e}")
         st.stop()
 
-    if not ids:
+    if not match_ids:
         st.info("No hay partidas para los filtros seleccionados.")
         st.stop()
 
-    agg = defaultdict(lambda: {"games": 0, "wins": 0, "kills": 0, "deaths": 0, "assists": 0, "cs": 0, "gold": 0})
+    # --- Cargar diccionario de campeones ---
+    champions_dict = load_champions()
 
-    prog = st.progress(0.0, text="Calculando estadísticas por campeón…")
-    for i, mid in enumerate(ids, start=1):
+    # --- Agregación por campeón ---
+    agg: Dict[int, Dict[str, Any]] = defaultdict(lambda: {
+        "games": 0,
+        "wins": 0,
+        "kills": 0,
+        "deaths": 0,
+        "assists": 0,
+        "cs": 0,
+        "gold": 0,
+        "name": "",
+    })
+
+    for mid in match_ids:
         try:
-            m = _cached_match(region, mid)
-            p = find_participant_by_puuid(m, puuid)
-            if not p:
-                continue
-            champ_id = p.get("championId")
-            champ_name = p.get("championName")
-            a = agg[champ_name]
-            a["games"] += 1
-            a["wins"] += 1 if p.get("win") else 0
-            a["kills"] += p.get("kills", 0)
-            a["deaths"] += p.get("deaths", 0)
-            a["assists"] += p.get("assists", 0)
-            a["cs"] += p.get("totalMinionsKilled", 0) + p.get("neutralMinionsKilled", 0)
-            a["gold"] += p.get("goldEarned", 0)
-            a["img"] = get_champion_image(champ_id, champions_dict)
-        except NotFound:
-            pass
-        except RiotError:
-            pass
-        prog.progress(i / len(ids))
+            match = match_by_id(region, mid)
+        except Exception:
+            continue
+
+        participants = match.get("info", {}).get("participants", [])
+        # Buscar al jugador
+        me = next((p for p in participants if p.get("puuid") == puuid), None)
+        if not me:
+            continue
+
+        champ_id = me.get("championId")
+        entry = agg[champ_id]
+        entry["games"] += 1
+        entry["wins"] += 1 if me.get("win") else 0
+        entry["kills"] += me.get("kills", 0)
+        entry["deaths"] += me.get("deaths", 0)
+        entry["assists"] += me.get("assists", 0)
+        entry["cs"] += me.get("totalMinionsKilled", 0) + me.get("neutralMinionsKilled", 0)
+        entry["gold"] += me.get("goldEarned", 0)
+        entry["name"] = me.get("championName", str(champ_id))
+
+    # --- Construir DataFrame (sin pandas import explícito arriba para no romper cold start) ---
+    import pandas as pd
 
     rows = []
-    for champ, a in agg.items():
-        if a["games"] == 0:
+    for cid, e in agg.items():
+        games = e["games"]
+        if games == 0:
             continue
-        deaths = a["deaths"] if a["deaths"] else 1
+        kills = e["kills"]; deaths = e["deaths"]; assists = e["assists"]
+        kda = (kills + assists) / (deaths if deaths > 0 else 1)
         rows.append({
-            "Champion": f'<img src="{a["img"]}" width="32"> {champ}',
-            "Games": a["games"],
-            "Win%": round(100 * a["wins"] / a["games"], 1),
-            "KDA": round((a["kills"] + a["assists"]) / deaths, 2),
-            "Avg K": round(a["kills"]/a["games"], 2),
-            "Avg D": round(a["deaths"]/a["games"], 2),
-            "Avg A": round(a["assists"]/a["games"], 2),
-            "Avg CS": round(a["cs"]/a["games"], 1),
-            "Avg Gold": round(a["gold"]/a["games"]),
+            "Icon": get_champion_image(cid, champions_dict),
+            "Champion": e["name"],
+            "Games": int(games),
+            "Win%": _fmt2(100.0 * _safe_div(e["wins"], games)),
+            "KDA": _fmt2(kda),
+            "Avg K": _fmt2(_safe_div(kills, games)),
+            "Avg D": _fmt2(_safe_div(deaths, games)),
+            "Avg A": _fmt2(_safe_div(assists, games)),
+            "Avg CS": _fmt2(_safe_div(e["cs"], games)),
+            "Avg Gold": int(round(_safe_div(e["gold"], games))),
         })
 
-    df = pd.DataFrame(rows).sort_values(["Games", "Win%"], ascending=[False, False])
+    if not rows:
+        st.info("No hay datos agregables para mostrar.")
+        st.stop()
 
-    # Dark full-width style actualizado para mejorar contraste y visibilidad
-    st.markdown("""
-        <style>
-            table {
-                width: 100% !important;
-                border-collapse: collapse;
-            }
-            table thead th {
-                background-color: #001f3f;  /* Azul más oscuro */
-                color: #f0f0f0;             /* Letras más visibles */
-                padding: 12px;
-                text-align: center;
-            }
-            table tbody tr:nth-child(odd) {
-                background-color: #121212;
-            }
-            table tbody tr:nth-child(even) {
-                background-color: #1a1a1a;
-            }
-            table tbody td {
-                color: #e0e0e0;             /* Letras más claras */
-                padding: 10px;
-                text-align: center;
-            }
-            table tbody tr:hover {
-                background-color: #333333;
-            }
-        </style>
-    """, unsafe_allow_html=True)
+    df = pd.DataFrame(rows).sort_values(["Games", "Win%"], ascending=[False, False]).reset_index(drop=True)
 
-    if not df.empty:
-        st.write(df.to_html(escape=False, index=False), unsafe_allow_html=True)
+    # --- Mostrar DataFrame con columna de imagen real ---
+    st.dataframe(
+        df,
+        use_container_width=True,
+        column_config={
+            "Icon": st.column_config.ImageColumn(""),
+            "Champion": st.column_config.TextColumn("Champion", help="Campeón jugado"),
+            "Games": st.column_config.NumberColumn(format="%d"),
+            "Win%": st.column_config.NumberColumn(format="%.2f%%"),
+            "KDA": st.column_config.NumberColumn(format="%.2f"),
+            "Avg K": st.column_config.NumberColumn(format="%.2f"),
+            "Avg D": st.column_config.NumberColumn(format="%.2f"),
+            "Avg A": st.column_config.NumberColumn(format="%.2f"),
+            "Avg CS": st.column_config.NumberColumn(format="%.1f"),
+            "Avg Gold": st.column_config.NumberColumn(format="%d"),
+        },
+        hide_index=True,
+    )
+
+if __name__ == "__main__":
+    main()
