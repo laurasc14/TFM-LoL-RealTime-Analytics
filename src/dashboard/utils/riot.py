@@ -3,13 +3,15 @@ from __future__ import annotations
 import os
 import time
 import random
-import json, pathlib
+import json
+import pathlib
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 from datetime import datetime, timezone
-from pymongo import MongoClient
+from functools import lru_cache
 
 import requests
+from pymongo import MongoClient
 
 # ───────────────────────────────
 # Excepciones
@@ -57,7 +59,6 @@ PLATFORM_TO_CLUSTER: Dict[str, str] = {
 }
 
 def _regional_host(platform: str) -> str:
-    """Devuelve https://{cluster}.api.riotgames.com para una plataforma dada."""
     p = (platform or "").lower().strip()
     cluster = PLATFORM_TO_CLUSTER.get(p)
     if not cluster:
@@ -65,7 +66,9 @@ def _regional_host(platform: str) -> str:
     return f"https://{cluster}.api.riotgames.com"
 
 
-# Colas comunes
+# ───────────────────────────────
+# Colas
+# ───────────────────────────────
 QUEUES: Dict[str, Optional[int]] = {
     "Todas": None,
     "Clasificatoria Solo/Dúo": 420,
@@ -78,8 +81,6 @@ QUEUES: Dict[str, Optional[int]] = {
 def queue_label_to_id(label: str) -> Optional[int]:
     return QUEUES.get(label, None)
 
-_CACHE_FILE = "/app/data/rank_cache.json"
-_mongo = None
 
 # ───────────────────────────────
 # Campeones (opcional, para imágenes)
@@ -102,51 +103,49 @@ def get_champion_image(champion_id: int, champions: dict) -> str:
 
 
 # ───────────────────────────────
-# Rank / League helpers
+# Rank / League helpers + cache persistente
 # ───────────────────────────────
 def get_rank_icon_url(tier: Optional[str], rank: Optional[str]) -> str:
     if not tier or tier.lower() == "unranked":
         return ""
     return f"https://opgg-static.akamaized.net/images/medals/{tier.lower()}_{(rank or '').lower()}.png"
 
+# Cache: Mongo si hay MONGO_URI; si no, fichero JSON
+_CACHE_FILE = "/app/data/rank_cache.json"
+_mongo_client: Optional[MongoClient] = None
+
 def _rank_cache_coll():
-    """Devuelve la colección de cache si hay MONGO_URI; si no, None."""
     uri = os.getenv("MONGO_URI")
     if not uri:
         return None
-    global _mongo
-    if _mongo is None:
-        _mongo = MongoClient(uri)
-    # Si tu MONGO_URI incluye ?authSource=.../db concreta, se usa esa DB
-    db = _mongo.get_default_database() or _mongo["lol_realtime"]
+    global _mongo_client
+    if _mongo_client is None:
+        _mongo_client = MongoClient(uri)
+    db = _mongo_client.get_default_database()
+    if db is None:
+        db = _mongo_client["lol_realtime"]
     return db["rank_cache"]
 
-def load_last_known_ranks(puuid: str) -> list:
-    """Lee la lista de entries (formato league/v4) cacheados para un puuid."""
+def load_last_known_ranks(puuid: str) -> list[dict]:
+    """Carga de Mongo la última info de rangos guardada para este invocador."""
     coll = _rank_cache_coll()
-    if coll:
+    if coll is not None:
         doc = coll.find_one({"_id": puuid})
         return (doc or {}).get("entries", [])
-    try:
-        with open(_CACHE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data.get(puuid, [])
-    except Exception:
-        return []
+    return []
 
-def save_last_known_ranks(puuid: str, entries: list) -> None:
-    """Guarda entries tal cual los devuelve league/v4, por puuid."""
-    if not puuid or not entries:
-        return
+
+def save_last_known_ranks(puuid: str, entries: list[dict]) -> None:
+    """Guarda en Mongo la info de rangos para este invocador."""
     coll = _rank_cache_coll()
-    if coll:
+    if coll is not None:
         coll.update_one(
             {"_id": puuid},
             {"$set": {"entries": entries, "updatedAt": datetime.utcnow()}},
             upsert=True,
         )
+
         return
-    # Fichero
     pathlib.Path(os.path.dirname(_CACHE_FILE)).mkdir(parents=True, exist_ok=True)
     try:
         with open(_CACHE_FILE, "r", encoding="utf-8") as f:
@@ -156,6 +155,7 @@ def save_last_known_ranks(puuid: str, entries: list) -> None:
     data[puuid] = entries
     with open(_CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
 
 # ───────────────────────────────
 # API KEY
@@ -172,7 +172,7 @@ def get_riot_api_key() -> str:
             return str(k)
     except Exception:
         pass
-    # 2) ambiente
+    # 2) variable de entorno
     k = os.getenv("RIOT_API_KEY")
     if k:
         return k
@@ -346,7 +346,6 @@ def lookup_summoner(query: str, platform: str) -> Dict[str, Any]:
     """
     Permite buscar 'Nombre' o 'Nombre#TAG'.
     Devuelve: { region, puuid, id, level, name, profileIconId }
-    Con fallbacks: si falla RiotID, probamos nombre a pelo.
     """
     out = {
         "region": (platform or "").lower().strip(),
@@ -357,7 +356,6 @@ def lookup_summoner(query: str, platform: str) -> Dict[str, Any]:
     if not q:
         return out
 
-    # Helper
     def _fill_from_summ(s: dict):
         if not s:
             return
@@ -370,7 +368,7 @@ def lookup_summoner(query: str, platform: str) -> Dict[str, Any]:
     try:
         if "#" in q:
             game, tag = [x.strip() for x in q.split("#", 1)]
-            # 1) Intento con RiotID exacto
+            # 1) exacto con RiotID
             try:
                 acc = account_by_riot_id(platform, game, tag)
                 puuid = acc.get("puuid")
@@ -379,14 +377,12 @@ def lookup_summoner(query: str, platform: str) -> Dict[str, Any]:
                     _fill_from_summ(s_by_puuid)
                     return out
             except RiotError:
-                # caemos al nombre a pelo
-                pass
+                pass  # caemos a nombre a pelo
 
             # 2) Fallback: nombre a pelo
             try:
                 s_by_name = summoner_by_name(platform, game)
                 _fill_from_summ(s_by_name)
-                # enriquecer con RiotID si hay puuid
                 if out["puuid"]:
                     try:
                         acc2 = account_by_puuid(platform, out["puuid"])
@@ -398,7 +394,6 @@ def lookup_summoner(query: str, platform: str) -> Dict[str, Any]:
             except RiotError:
                 return out
         else:
-            # solo nombre
             s_by_name = summoner_by_name(platform, q)
             _fill_from_summ(s_by_name)
             if out["puuid"]:
@@ -413,76 +408,96 @@ def lookup_summoner(query: str, platform: str) -> Dict[str, Any]:
         return out
 
 
-def _mongo_uri() -> str:
-    uri = os.getenv("MONGO_URI")
-    if uri:
-        return uri
-    host = os.getenv("MONGO_HOST", "final-mongo")
-    port = os.getenv("MONGO_PORT", "27017")
-    user = os.getenv("MONGO_APP_USER")
-    pwd  = os.getenv("MONGO_APP_PASS")
-    dbn  = os.getenv("MONGO_INITDB_DATABASE", "lol_realtime")
-    if user and pwd:
-        return f"mongodb://{user}:{pwd}@{host}:{port}/{dbn}?authSource={dbn}"
-    return f"mongodb://{host}:{port}/{dbn}"
-
-def _mongo():
-    client = MongoClient(_mongo_uri())
-    dbname = os.getenv("MONGO_INITDB_DATABASE", "lol_realtime")
-    return client[dbname]
-
-def save_last_known_ranks(puuid: str, leagues: list) -> None:
-    """
-    Guarda el último rango conocido (solo/flex) tal y como viene de league-v4.
-    Estructura:
-      { puuid, solo: {tier,rank,lp}, flex: {tier,rank,lp}, updated_at }
-    """
-    solo, flex = None, None
-    for e in leagues or []:
-        if e.get("queueType") == "RANKED_SOLO_5x5":
-            solo = {
-                "tier": e.get("tier"),
-                "rank": e.get("rank"),
-                "lp": e.get("leaguePoints", 0)
-            }
-        elif e.get("queueType") == "RANKED_FLEX_SR":
-            flex = {
-                "tier": e.get("tier"),
-                "rank": e.get("rank"),
-                "lp": e.get("leaguePoints", 0)
-            }
-    doc = {
-        "puuid": puuid,
-        "solo": solo,
-        "flex": flex,
-        "updated_at": datetime.utcnow()
-    }
-    _mongo()["last_known_rank"].update_one({"puuid": puuid}, {"$set": doc}, upsert=True)
-
-def load_last_known_ranks(puuid: str) -> dict:
-    """
-    Devuelve {'solo': {...} | None, 'flex': {...} | None} o ambos None si no hay registro.
-    """
-    doc = _mongo()["last_known_rank"].find_one({"puuid": puuid}) or {}
-    return {
-        "solo": doc.get("solo"),
-        "flex": doc.get("flex"),
-        "updated_at": doc.get("updated_at")
-    }
-
+# Wrapper por compatibilidad con tu código
 def league_entries_by_summoner(platform: str, summoner_id: str) -> List[Dict[str, Any]]:
-    """
-    Wrapper de summoner_leagues para mantener compatibilidad con el resto del código.
-    """
     return summoner_leagues(platform, summoner_id)
 
 
-def explain_rank_fallback(puuid: str) -> str:
+def explain_rank_fallback(puuid: Optional[str]) -> str:
     """Mensaje cuando no hay rango en el split actual."""
-    cached = load_last_known_ranks(puuid) if puuid else []
+    cached = load_last_known_ranks(puuid or "")
     if cached:
         return ("Mostramos el **último rango conocido** porque la API de Riot no "
-                "devuelve tier/división en este momento.")
+                "devuelve tier/división en este momento. En cuanto lo exponga, se actualizará.")
     return ("Aún no tenemos histórico para este invocador. Cuando Riot exponga "
             "el rango (p. ej., tras jugar clasificatorias) lo mostraremos aquí.")
 
+# ───────────────────────────────
+# Caché de nombres por (region, puuid) para no machacar la API
+# ───────────────────────────────
+
+# ---- Nombres: reconstrucción y caché en memoria --------------------------------
+_name_cache: dict[str, str] = {}   # puuid -> "Nombre#TAG" (o Summoner Name)
+
+def _save_name_cache(puuid: str, name: str) -> str:
+    if puuid and name:
+        _name_cache[puuid] = name
+    return name
+
+def resolve_summoner_name(platform: str, participant: dict) -> str:
+    """
+    Devuelve un nombre para mostrar:
+    1) Si el match trae riotIdGameName/tagLine, lo usa (RiotID).
+    2) Si no, intenta account-v1 by puuid (gameName + tagLine).
+    3) Si no, intenta summoner-v4 by puuid (Summoner 'name').
+    4) Si todo falla, usa lo que venga en participant ('summonerName') o un pseudo.
+    Siempre cachea por puuid.
+    """
+    try:
+        puuid = (participant or {}).get("puuid")
+        if not puuid:
+            # último recurso sin caché: cualquier cosa que venga
+            base = (
+                participant.get("riotIdGameName")
+                or participant.get("gameName")
+                or participant.get("summonerName")
+                or participant.get("name")
+            )
+            return base or "-"
+
+        # 0) caché
+        cached = _name_cache.get(puuid)
+        if cached:
+            return cached
+
+        # 1) ¿Viene en el participant?
+        game = participant.get("riotIdGameName") or participant.get("gameName")
+        tag  = participant.get("riotIdTagline")  or participant.get("tagLine")
+        if game:
+            return _save_name_cache(puuid, f"{game}#{tag}" if tag else game)
+
+        # 2) account-v1 (RiotID) -> necesita host regional
+        try:
+            acc = account_by_puuid(platform, puuid)  # europe/americas/asia...
+            g = acc.get("gameName")
+            t = acc.get("tagLine")
+            if g:
+                return _save_name_cache(puuid, f"{g}#{t}" if t else g)
+        except Exception:
+            pass  # seguimos probando
+
+        # 3) summoner-v4 (Summoner Name clásico, host de plataforma)
+        try:
+            summ = summoner_by_puuid(platform, puuid)
+            n = summ.get("name")
+            if n:
+                return _save_name_cache(puuid, n)
+        except Exception:
+            pass
+
+        # 4) Fallbacks del participant
+        base = (
+            participant.get("summonerName")
+            or participant.get("name")
+        )
+        if base:
+            return _save_name_cache(puuid, base)
+
+        # 5) Pseudo si no conseguimos nada
+        pseudo = f"{puuid[:8]}…"
+        return _save_name_cache(puuid, pseudo)
+
+    except Exception:
+        # último ‘paracaídas’ para no romper el render
+        pu = participant.get("puuid")
+        return _save_name_cache(pu, (participant.get("summonerName") or "-"))
