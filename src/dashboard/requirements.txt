@@ -4,3 +4,6 @@ pandas>=2.2
 riotwatcher>=3.2
 requests>=2.31
 matplotlib
+python-dotenv
+streamlit
+requests

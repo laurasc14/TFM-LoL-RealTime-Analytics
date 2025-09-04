@@ -7,7 +7,7 @@ from src.dashboard.pages import _02_Match_History as match_history
 from src.dashboard.pages import _03_Champion_Stats as champion_stats
 from src.dashboard.pages import _04_Live_Game as live_game
 
-# --- Configuración general de la app (solo aquí) ---
+# --- Configuración general de la app ---
 st.set_page_config(page_title="LoL Dashboard", page_icon="🎮", layout="wide")
 
 # --- Estado inicial global ---
@@ -18,10 +18,25 @@ if "theme" not in st.session_state:
 if "dd_version" not in st.session_state:
     st.session_state["dd_version"] = "14.18.1"
 
-# ⚠️ Consumir navegación solicitada por la Home ANTES de instanciar el radio
-if "__go_to" in st.session_state:
-    st.session_state["current_page"] = st.session_state["__go_to"]
-    del st.session_state["__go_to"]
+# --- Navegación ---
+page = st.sidebar.radio(
+    "Selecciona una página:",
+    ["Home", "Summoner Search", "Match History", "Champion Stats", "Live Game"],
+    index=["Home", "Summoner Search", "Match History", "Champion Stats", "Live Game"].index(st.session_state["current_page"]),
+    key="current_page",
+)
+
+# --- Router ---
+if page == "Home":
+    home.main()
+elif page == "Summoner Search":
+    summoner_search.main()
+elif page == "Match History":
+    match_history.main()
+elif page == "Champion Stats":
+    champion_stats.main()
+elif page == "Live Game":
+    live_game.main()
 
 # --- Estilos globales suaves ---
 st.markdown("""
@@ -53,22 +68,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Sidebar / navegación ---
-page = st.sidebar.radio(
-    "Selecciona una página:",
-    ["Home", "Summoner Search", "Match History", "Champion Stats", "Live Game"],
-    index=["Home", "Summoner Search", "Match History", "Champion Stats", "Live Game"]
-          .index(st.session_state["current_page"]),
-    key="current_page",
-)
-
-# --- Router ---
-if page == "Home":
-    home.main()
-elif page == "Summoner Search":
-    summoner_search.main()
-elif page == "Match History":
-    match_history.main()
-elif page == "Champion Stats":
-    champion_stats.main()
-elif page == "Live Game":
-    live_game.main()
+#page = st.sidebar.radio(
+ #   "Selecciona una página:",
+  #  ["Home", "Summoner Search", "Match History", "Champion Stats", "Live Game"],
+   # index=["Home", "Summoner Search", "Match History", "Champion Stats", "Live Game"]
+    #      .index(st.session_state["current_page"]),
+  #  key="current_page",
+#)
