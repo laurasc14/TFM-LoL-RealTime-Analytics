@@ -8,10 +8,16 @@ import pathlib
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 from datetime import datetime, timezone
-from functools import lru_cache
 
 import requests
 from pymongo import MongoClient
+
+from dotenv import load_dotenv
+load_dotenv()
+
+API_KEY = os.getenv("RIOT_API_KEY")
+
+print(API_KEY)
 
 # ───────────────────────────────
 # Excepciones
@@ -83,23 +89,65 @@ def queue_label_to_id(label: str) -> Optional[int]:
 
 
 # ───────────────────────────────
-# Campeones (opcional, para imágenes)
+# Campeones (imágenes)
 # ───────────────────────────────
+_CHAMP_CACHE: dict | None = None  # cache en memoria
+
 def load_champions() -> dict:
-    """Carga champions.json (DDragon) y prepara un map {int(key)->champId}."""
-    file_path = os.path.join(os.path.dirname(__file__), "../data/champions.json")
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"No se encuentra champions.json en {file_path}")
-    with open(file_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        return {int(champ['key']): champ['id'] for champ in data['data'].values()}
+    """
+    Devuelve un mapa { int(championKey) -> 'ChampionId' }.
+    Intenta siempre DDragon (versión más reciente) y, si falla,
+    cae al champions.json local si existe.
+    """
+    global _CHAMP_CACHE
+    if _CHAMP_CACHE is not None:
+        return _CHAMP_CACHE
+
+    ver = get_ddragon_version()
+    url = f"https://ddragon.leagueoflegends.com/cdn/{ver}/data/en_US/champion.json"
+    try:
+        r = requests.get(url, timeout=8)
+        r.raise_for_status()
+        data = r.json()
+        _CHAMP_CACHE = {int(c['key']): c['id'] for c in data['data'].values()}
+        return _CHAMP_CACHE
+    except Exception:
+        # Fallback local
+        try:
+            file_path = os.path.join(os.path.dirname(__file__), "../data/champions.json")
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                _CHAMP_CACHE = {int(ch['key']): ch['id'] for ch in data['data'].values()}
+                return _CHAMP_CACHE
+        except Exception:
+            _CHAMP_CACHE = {}
+            return _CHAMP_CACHE
+
+_DDRAGON_VER: Optional[str] = None
+
+def get_ddragon_version() -> str:
+    """
+    Devuelve la última versión de DDragon (cacheada).
+    Si la llamada falla, usa un fallback reciente.
+    """
+    global _DDRAGON_VER
+    if _DDRAGON_VER:
+        return _DDRAGON_VER
+    try:
+        r = requests.get("https://ddragon.leagueoflegends.com/api/versions.json", timeout=8)
+        r.raise_for_status()
+        versions = r.json()
+        _DDRAGON_VER = versions[0] if versions else "14.20.1"
+    except Exception:
+        _DDRAGON_VER = "14.20.1"  # fallback razonable
+    return _DDRAGON_VER
 
 def get_champion_image(champion_id: int, champions: dict) -> str:
-    champion_name = champions.get(champion_id)
-    if champion_name:
-        # Versión estable de ddragon
-        return f"http://ddragon.leagueoflegends.com/cdn/12.15.1/img/champion/{champion_name}.png"
-    return ""
+    name = champions.get(champion_id)
+    if not name:
+        return ""
+    ver = get_ddragon_version()
+    return f"https://ddragon.leagueoflegends.com/cdn/{ver}/img/champion/{name}.png"
 
 
 # ───────────────────────────────
@@ -121,6 +169,7 @@ def _rank_cache_coll():
     global _mongo_client
     if _mongo_client is None:
         _mongo_client = MongoClient(uri)
+    # ¡No hacer bool(db)! Comparar con None:
     db = _mongo_client.get_default_database()
     if db is None:
         db = _mongo_client["lol_realtime"]
@@ -134,9 +183,8 @@ def load_last_known_ranks(puuid: str) -> list[dict]:
         return (doc or {}).get("entries", [])
     return []
 
-
 def save_last_known_ranks(puuid: str, entries: list[dict]) -> None:
-    """Guarda en Mongo la info de rangos para este invocador."""
+    """Guarda en Mongo la info de rangos para este invocador (o fichero JSON si no hay Mongo)."""
     coll = _rank_cache_coll()
     if coll is not None:
         coll.update_one(
@@ -144,7 +192,6 @@ def save_last_known_ranks(puuid: str, entries: list[dict]) -> None:
             {"$set": {"entries": entries, "updatedAt": datetime.utcnow()}},
             upsert=True,
         )
-
         return
     pathlib.Path(os.path.dirname(_CACHE_FILE)).mkdir(parents=True, exist_ok=True)
     try:
@@ -156,6 +203,26 @@ def save_last_known_ranks(puuid: str, entries: list[dict]) -> None:
     with open(_CACHE_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
+# ───────────────────────────────
+# MAESTRIAS
+# ───────────────────────────────
+def top_champion_masterries(region: str, summoner_id: str, n: int = 4):
+    """
+    Devuelve los campeones con mayor maestría de un invocador.
+    :param region: Región del invocador (ej. 'euw1')
+    :param summoner_id: ID del invocador en Riot
+    :param n: Cantidad de campeones a devolver (default 4)
+    :return: Lista de campeones con mayor maestría
+    """
+    url = f"https://{region}.api.riotgames.com/lol/champion-mastery/v4/champion-masteries/by-account/{summoner_id}"
+    headers = {"X-Riot-Token": "tu_api_key_aqui"}  # Reemplaza con tu API Key de Riot
+    response = requests.get(url, headers=headers)
+
+    if response.status_code == 200:
+        masteries = response.json()
+        return sorted(masteries, key=lambda x: x['championPoints'], reverse=True)[:n]
+    else:
+        return []  # Si no hay datos o algo falla, devuelve una lista vacía
 
 # ───────────────────────────────
 # API KEY
@@ -200,7 +267,8 @@ SESSION = requests.Session()
 _last_call_ts = 0.0
 
 def _headers() -> Dict[str, str]:
-    return {"X-Riot-Token": _api_key()}
+    key = _api_key()
+    return {"X-Riot-Token": key}
 
 def _polite_delay(min_interval: float = 0.12) -> None:
     global _last_call_ts
@@ -422,11 +490,10 @@ def explain_rank_fallback(puuid: Optional[str]) -> str:
     return ("Aún no tenemos histórico para este invocador. Cuando Riot exponga "
             "el rango (p. ej., tras jugar clasificatorias) lo mostraremos aquí.")
 
-# ───────────────────────────────
-# Caché de nombres por (region, puuid) para no machacar la API
-# ───────────────────────────────
 
-# ---- Nombres: reconstrucción y caché en memoria --------------------------------
+# ───────────────────────────────
+# Caché de nombres por (puuid) para no machacar la API
+# ───────────────────────────────
 _name_cache: dict[str, str] = {}   # puuid -> "Nombre#TAG" (o Summoner Name)
 
 def _save_name_cache(puuid: str, name: str) -> str:
@@ -446,7 +513,6 @@ def resolve_summoner_name(platform: str, participant: dict) -> str:
     try:
         puuid = (participant or {}).get("puuid")
         if not puuid:
-            # último recurso sin caché: cualquier cosa que venga
             base = (
                 participant.get("riotIdGameName")
                 or participant.get("gameName")
@@ -455,28 +521,24 @@ def resolve_summoner_name(platform: str, participant: dict) -> str:
             )
             return base or "-"
 
-        # 0) caché
         cached = _name_cache.get(puuid)
         if cached:
             return cached
 
-        # 1) ¿Viene en el participant?
         game = participant.get("riotIdGameName") or participant.get("gameName")
         tag  = participant.get("riotIdTagline")  or participant.get("tagLine")
         if game:
             return _save_name_cache(puuid, f"{game}#{tag}" if tag else game)
 
-        # 2) account-v1 (RiotID) -> necesita host regional
         try:
-            acc = account_by_puuid(platform, puuid)  # europe/americas/asia...
+            acc = account_by_puuid(platform, puuid)
             g = acc.get("gameName")
             t = acc.get("tagLine")
             if g:
                 return _save_name_cache(puuid, f"{g}#{t}" if t else g)
         except Exception:
-            pass  # seguimos probando
+            pass
 
-        # 3) summoner-v4 (Summoner Name clásico, host de plataforma)
         try:
             summ = summoner_by_puuid(platform, puuid)
             n = summ.get("name")
@@ -485,7 +547,6 @@ def resolve_summoner_name(platform: str, participant: dict) -> str:
         except Exception:
             pass
 
-        # 4) Fallbacks del participant
         base = (
             participant.get("summonerName")
             or participant.get("name")
@@ -493,11 +554,225 @@ def resolve_summoner_name(platform: str, participant: dict) -> str:
         if base:
             return _save_name_cache(puuid, base)
 
-        # 5) Pseudo si no conseguimos nada
         pseudo = f"{puuid[:8]}…"
         return _save_name_cache(puuid, pseudo)
 
     except Exception:
-        # último ‘paracaídas’ para no romper el render
         pu = participant.get("puuid")
         return _save_name_cache(pu, (participant.get("summonerName") or "-"))
+
+
+# ───────────────────────────────
+# Presentación / helpers de UI
+# ───────────────────────────────
+_QUEUE_NAMES: Dict[int, str] = {
+    420: "Clasificatoria Solo/Dúo",
+    440: "Clasificatoria Flexible",
+    400: "Normal Draft",
+    430: "Normal Blind",
+    450: "ARAM",
+    700: "Clash",
+    1900: "URF",
+}
+
+def queue_name(qid: int) -> str:
+    return _QUEUE_NAMES.get(int(qid), f"Queue {qid}")
+
+def secs_to_str(total: int) -> str:
+    total = max(0, int(total or 0))
+    m, s = divmod(total, 60)
+    return f"{m}m {s:02d}s"
+
+def status_label_from_match(match: dict, p: dict) -> str:
+    dur = int(match.get("info", {}).get("gameDuration", 0))
+    if dur < 300:
+        return "Remake"
+    return "Win" if p.get("win") else "Lose"
+
+def row_bg(status: str) -> str:
+    if status == "Win":
+        return "#133222"   # verde oscuro
+    if status == "Lose":
+        return "#321919"   # rojo oscuro
+    return "#2c2c2c"
+
+def status_badge_color(status: str) -> str:
+    if status == "Win":
+        return "#22c55e"
+    if status == "Lose":
+        return "#ef4444"
+    return "#eab308"
+
+_DDRAGON_VERSION_FALLBACK = "14.12.1"
+
+def ddragon_version_from_match(match: dict) -> str:
+    """
+    Devuelve una versión válida de DDragon para construir URLs de assets.
+    Si el match trae info['gameVersion'] tipo '14.12.543.1234', devolvemos '14.12.1';
+    si no viene, usamos el fallback.
+    """
+    raw = (match.get("info", {}) or {}).get("gameVersion") or ""
+    if raw:
+        parts = raw.split(".")
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            return f"{parts[0]}.{parts[1]}.1"
+    return _DDRAGON_VERSION_FALLBACK
+
+def _img(url: str, size: int = 18, alt: str = "") -> str:
+    if not url:
+        return ""
+    return (
+        f"<img src='{url}' title='{alt}' "
+        f"style='width:{size}px;height:{size}px;border-radius:4px;margin-right:4px;'>"
+    )
+
+STYLE_NAME = {
+    8000: "Precision",
+    8100: "Domination",
+    8200: "Sorcery",
+    8300: "Inspiration",
+    8400: "Resolve",
+}
+
+SUMM_ID_TO_KEY = {
+    1: "SummonerBoost",
+    3: "SummonerExhaust",
+    4: "SummonerFlash",
+    6: "SummonerHaste",
+    7: "SummonerHeal",
+    11: "SummonerSmite",
+    12: "SummonerTeleport",
+    13: "SummonerMana",
+    14: "SummonerDot",
+    21: "SummonerBarrier",
+}
+
+def _rune_keystone_img(perk_id: int) -> str:
+    return f"https://ddragon.leagueoflegends.com/cdn/img/perk/{perk_id}.png"
+
+def _rune_style_img(style_id: int) -> Optional[str]:
+    name = STYLE_NAME.get(style_id)
+    if not name:
+        return None
+    return f"https://ddragon.leagueoflegends.com/cdn/img/perk-images/Styles/{name}/{name}.png"
+
+def _extract_runes(participant: dict) -> tuple[Optional[int], Optional[int], Optional[int]]:
+    try:
+        styles = participant.get("perks", {}).get("styles", []) or []
+        primary = next((s for s in styles if s.get("description") == "primaryStyle"), None)
+        sub     = next((s for s in styles if s.get("description") == "subStyle"), None)
+        keystone = None
+        if primary and primary.get("selections"):
+            keystone = int(primary["selections"][0]["perk"])
+        return keystone, int(primary["style"]) if primary else None, int(sub["style"]) if sub else None
+    except Exception:
+        return None, None, None
+
+def _spell_img(spell_id: Optional[int], version: str) -> str:
+    if not spell_id:
+        return ""
+    key = SUMM_ID_TO_KEY.get(int(spell_id))
+    if not key:
+        return ""
+    return _img(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/spell/{key}.png", 20, key)
+
+def build_runes_spells_items_html(participant: dict, version: str) -> str:
+    """
+    Devuelve un fragmento HTML con:
+    - Keystone (icono grande)
+    - SubStyle (icono del árbol secundario)
+    - Summoner Spells
+    - Items (0..6) + Control Wards
+    """
+    bits: list[str] = []
+
+    # Runas
+    keystone, _, sub_style = _extract_runes(participant)
+    if keystone:
+        bits.append(_img(_rune_keystone_img(keystone), 22, "Keystone"))
+    if sub_style:
+        sub_icon = _rune_style_img(sub_style)
+        if sub_icon:
+            bits.append(_img(sub_icon, 20, "Sub Style"))
+
+    if bits:
+        bits.append("<span style='opacity:.4;margin:0 4px'>•</span>")
+
+    # Spells
+    s1, s2 = participant.get("summoner1Id"), participant.get("summoner2Id")
+    spells_html = _spell_img(s1, version) + _spell_img(s2, version)
+    if spells_html:
+        bits.append(spells_html)
+        bits.append("<span style='opacity:.4;margin:0 4px'>•</span>")
+
+    # Items
+    items_html = ""
+    for i in range(7):
+        v = participant.get(f"item{i}")
+        if v and int(v) != 0:
+            items_html += _img(
+                f"https://ddragon.leagueoflegends.com/cdn/{version}/img/item/{v}.png",
+                20
+            )
+    if items_html:
+        bits.append(items_html)
+
+    # Control wards
+    pinks = int(participant.get("visionWardsBoughtInGame", 0) or 0)
+    if pinks > 0:
+        bits.append(
+            _img(f"https://ddragon.leagueoflegends.com/cdn/{version}/img/item/2055.png", 20, "Control Ward")
+            + f"<span style='font-size:12px;opacity:.85;margin-left:2px;'>x{pinks}</span>"
+        )
+
+    body = "".join(bits) if bits else "—"
+    return f"<span style='display:inline-flex;align-items:center;gap:4px'>{body}</span>"
+
+
+# Alias por compatibilidad
+spells_runes_items_html = build_runes_spells_items_html
+
+def kda_text(p: dict) -> str:
+    return f"{p.get('kills',0)}/{p.get('deaths',0)}/{p.get('assists',0)}"
+
+def cs_text(p: dict) -> str:
+    return str(int(p.get("totalMinionsKilled",0)) + int(p.get("neutralMinionsKilled",0)))
+
+def gold_text(p: dict) -> str:
+    return str(p.get("goldEarned",0))
+
+def kp_text(p: dict, team_kills: int) -> str:
+    if team_kills <= 0:
+        return "0%"
+    return f"{round((p.get('kills',0)+p.get('assists',0))*100/team_kills)}%"
+
+def dmg_text(p: dict) -> str:
+    return str(p.get("totalDamageDealtToChampions",0))
+
+def vision_text(p: dict) -> str:
+    return str(p.get("visionScore",0))
+
+def spell_icon_url(spell_key: str, version: str) -> str:
+    return f"https://ddragon.leagueoflegends.com/cdn/{version}/img/spell/{spell_key}.png"
+
+def item_icon_url(item_id: int, version: str) -> str:
+    return f"https://ddragon.leagueoflegends.com/cdn/{version}/img/item/{item_id}.png"
+
+def perk_icon_url(perk_id: int, version: str) -> str:
+    return f"https://ddragon.leagueoflegends.com/cdn/{version}/img/perk/{perk_id}.png"
+
+
+# (Opcional) extractor de runas si lo necesitas en otros sitios
+def extract_runes_from_participant(p: dict) -> tuple[Optional[int], Optional[int], Optional[int]]:
+    try:
+        styles = p.get("perks", {}).get("styles", []) or []
+        prim = next((s for s in styles if s.get("description")=="primaryStyle"), None)
+        sub  = next((s for s in styles if s.get("description")=="subStyle"), None)
+        keystone = None
+        if prim and prim.get("selections"):
+            keystone = int(prim["selections"][0]["perk"])
+        return (int(prim["style"]) if prim else None,
+                int(sub["style"]) if sub else None,
+                keystone)
+    except Exception:
+        return None, None, None
