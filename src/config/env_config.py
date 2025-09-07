@@ -15,7 +15,7 @@ def get_env_config() -> dict:
 
         # Mongo (por defecto SIN autenticación)
         "MONGO_URI": os.getenv("MONGO_URI", "mongodb://final-mongo:27017/lol"),
-        "MONGO_DB": os.getenv("MONGO_DB", "lol"),
+        "MONGO_DB": os.getenv("MONGO_DB", "lol_realtime"),
         "MONGO_COLL": os.getenv("MONGO_COLL", "matches"),
 
         # Log level opcional

@@ -16,12 +16,12 @@ services:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
-      # ATENCIÓN: aquí montamos el **archivo** init-mongo.js del host
       - ./docker/mongo/init/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
     healthcheck:
-      test: [ "CMD","mongosh","--quiet",
-              "mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@localhost:27017/admin?authSource=admin",
-              "--eval","db.runCommand({ ping: 1 }).ok" ]
+      test: [
+        "CMD-SHELL",
+        "mongosh --quiet mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@localhost:27017/admin?authSource=admin --eval 'db.runCommand({ ping: 1 }).ok' || exit 1"
+      ]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -29,11 +29,18 @@ services:
 
   final-zookeeper:
     image: confluentinc/cp-zookeeper:7.6.1
+    container_name: final-zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - final-net
+    volumes:
+      - ./config/zoo.cfg:/etc/zookeeper/conf/zoo.cfg:ro
     healthcheck:
-      test: [ "CMD", "echo", "ruok", "|", "nc", "localhost", "2181" ]
+      test: ["CMD-SHELL", "echo ruok | nc localhost 2181 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -44,21 +51,23 @@ services:
     depends_on:
       - final-zookeeper
     environment:
-      KAFKA_ZOOKEEPER_CONNECT: final-zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://final-kafka:9092,PLAINTEXT_HOST://localhost:9094
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ZOOKEEPER_CONNECT: final-zookeeper:2181   # ✅ corregido
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://final-kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     ports:
       - "9092:9092"
-      - "9094:9094"
     networks: [ final-net ]
+    volumes:
+      - ./docker/kafka/init/init-topics.sh:/init-topics.sh:ro
     healthcheck:
-      test: [ "CMD", "bash", "-lc", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1" ]
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
       interval: 5s
       timeout: 5s
       retries: 50
-      start_period: 40s
+      start_period: 20s
 
   final-kafka-consumer:
     build:
@@ -67,8 +76,17 @@ services:
     container_name: final-kafka-consumer
     env_file: .env
     depends_on:
-      - final-kafka
-      - final-mongo
+      final-kafka:
+        condition: service_healthy
+      final-mongo:
+        condition: service_healthy
+    environment:
+      - BOOTSTRAP=${KAFKA_BROKERS}
+      - TOPIC=${IN_TOPIC}
+      - GROUP=${GROUP_ID}
+      - MONGO_URI=${MONGO_URI}
+      - DB_NAME=lol_realtime
+      - COLL_NAME=matches_raw
     networks: [ final-net ]
     restart: unless-stopped
 
@@ -82,6 +100,10 @@ services:
       - final-kafka
       - final-mongo
     networks: [ final-net ]
+    environment:
+      - MONGO_URI=${MONGO_URI}
+      - MONGO_DB=${MONGO_INITDB_DATABASE}
+      - MONGO_COLLECTION=matches_full
     restart: unless-stopped
 
   final-dashboard:

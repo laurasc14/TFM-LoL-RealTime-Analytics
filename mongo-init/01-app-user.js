@@ -1,6 +1,9 @@
-db = db.getSiblingDB('lol');
+db = db.getSiblingDB('lol_realtime');
+
 db.createUser({
-  user: 'appuser',
-  pwd: 'appsecret',
-  roles: [{ role: 'readWrite', db: 'lol' }]
+    user: "app",
+    pwd: "appsecret",
+    roles: [
+        { role: "readWrite", db: "lol_realtime" }
+    ]
 });

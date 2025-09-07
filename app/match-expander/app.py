@@ -6,8 +6,8 @@ KAFKA_BROKERS = os.getenv("KAFKA_BROKERS", "final-kafka:9092")
 IN_TOPIC      = os.getenv("IN_TOPIC", "lol.raw")
 OUT_TOPIC     = os.getenv("OUT_TOPIC", "lol.expanded")
 MONGO_URI     = os.getenv("MONGO_URI", "mongodb://final-mongo:27017")
-MONGO_DB      = os.getenv("MONGO_DB", "lol_realtime")
-COLLECTION    = os.getenv("MONGO_COLLECTION", "events")
+MONGO_DB      = os.getenv("DB", "lol_realtime")
+COLLECTION    = os.getenv("COLL", "matches_full")
 
 def log(*a): print(*a, flush=True)
 
