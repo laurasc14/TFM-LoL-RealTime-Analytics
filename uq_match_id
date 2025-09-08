@@ -1,0 +1,20 @@
+docker compose exec -T final-mongo bash -lc @'
+cat >/tmp/reindex.js <<'JS'
+db = db.getSiblingDB('lol_realtime');
+
+try {
+  db.matches_full.dropIndex('match_id_1');
+  print('dropped match_id_1');
+} catch (e) {
+  print('drop skipped: ' + e.message);
+}
+
+db.matches_full.createIndex(
+  { match_id: 1 },
+  { unique: true, name: 'uq_match_id' }
+);
+printjson(db.matches_full.getIndexes());
+JS
+
+mongosh "mongodb://app:appsecret@final-mongo:27017/?authSource=lol_realtime" --quiet /tmp/reindex.js
+'@

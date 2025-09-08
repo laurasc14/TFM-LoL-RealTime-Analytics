@@ -1,0 +1,4 @@
+aiokafka>=0.10
+python-dotenv
+requests>=2.31
+riotwatcher>=3.2

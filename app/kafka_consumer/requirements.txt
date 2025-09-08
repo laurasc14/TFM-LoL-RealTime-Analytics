@@ -1,0 +1,5 @@
+aiokafka>=0.10
+motor>=3.4
+pymongo==4.7.2
+riotwatcher>=3.2
+python-dotenv
