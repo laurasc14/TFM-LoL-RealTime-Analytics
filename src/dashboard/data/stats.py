@@ -1,101 +1,231 @@
-from src.dashboard.utils.riot import matches_by_puuid, find_participant_by_puuid, match_by_id
+# -*- coding: utf-8 -*-
+from __future__ import annotations
+
+import math
+from typing import Iterable, Mapping, Tuple, Optional
+from collections import defaultdict
+
 import streamlit as st
 
-# ──────────────────────────────────────────────
-# Estadísticas generales
-# ──────────────────────────────────────────────
 
-def calculate_general_stats(user_id: str, platform: str, max_games: int = 1000) -> dict:
-    """Calcula las estadísticas generales del invocador (winrate, total de partidas, KDA)."""
-    total_kills = 0
-    total_deaths = 0
-    total_assists = 0
-    total_games = 0
-    total_wins = 0
-    matches = []
+# ==========
+# Session helpers
+# ==========
+def get_active_player() -> Optional[dict]:
+    """Devuelve el jugador activo desde la sesión (o None si no hay)."""
+    # Puede venir como "summoner" (resumen) o "invoker_ctx" (contexto rico)
+    return st.session_state.get("invoker_ctx") or st.session_state.get("summoner")
 
-    while len(matches) < max_games:
-        match_ids = matches_by_puuid(user_id, platform, count=100)
-        for match_id in match_ids:
-            match_details = match_by_id(platform, match_id)
-            match_info = match_details.get("info", {})
 
-            total_games += 1
-            participant = find_participant_by_puuid(match_info, user_id)
+def require_active_player() -> dict:
+    """Igual que arriba, pero error si no hay jugador."""
+    ctx = get_active_player()
+    if not ctx:
+        raise RuntimeError("No hay jugador cargado en sesión (usa 01 Summoner Search).")
+    return ctx
 
-            if participant:
-                kills = participant.get("kills", 0)
-                deaths = participant.get("deaths", 0)
-                assists = participant.get("assists", 0)
-                win = participant.get("win", False)
 
-                total_kills += kills
-                total_deaths += deaths
-                total_assists += assists
+# ==========
+# Math / format helpers (reemplazo ligero de lo que solías tener en riot.py)
+# ==========
+def _safe_div(a: float, b: float, default: float = 0.0) -> float:
+    try:
+        if b == 0:
+            return default
+        return float(a) / float(b)
+    except Exception:
+        return default
 
-                if win:
-                    total_wins += 1
 
-    winrate = (total_wins / total_games) * 100 if total_games > 0 else 0
-    kda = (total_kills + total_assists) / total_deaths if total_deaths > 0 else total_kills + total_assists
+def kda_str(k: int, d: int, a: int) -> str:
+    """Devuelve 'KDA' clásico y ratio (p.e. '7/3/9 (5.33)')"""
+    ratio = _safe_div(k + a, max(1, d))
+    return f"{k}/{d}/{a} ({ratio:.2f})"
 
+
+def cs_per_min(cs_total: float, duration_seconds: float) -> float:
+    return _safe_div(cs_total, duration_seconds / 60.0)
+
+
+def gold_per_min(gold: float, duration_seconds: float) -> float:
+    return _safe_div(gold, duration_seconds / 60.0)
+
+
+def dmg_share(team_damage: float, player_damage: float) -> float:
+    return _safe_div(player_damage, team_damage)
+
+
+def fmt_pct(x: float, ndigits: int = 1) -> str:
+    return f"{x * 100:.{ndigits}f}%"
+
+
+def fmt_ratio(x: float, ndigits: int = 2) -> str:
+    return f"{x:.{ndigits}f}"
+
+
+def winrate(wins: int, losses: int) -> float:
+    total = wins + losses
+    return _safe_div(wins, total)
+
+
+# ==========
+# Aggregations (ejemplos de KPIs a partir de partidas)
+#   Los datos de partida/participante los trae tu backend;
+#   estas funciones solo agregan y formatean.
+# ==========
+def aggregate_basic_kpis(rows: Iterable[Mapping]) -> dict:
+    """
+    rows: iterable de diccionarios de partidas del jugador (uno por match), con campos como:
+      kills, deaths, assists, cs, goldEarned, timePlayed, damageDealt, teamDamage, win (bool)
+    """
+    total = 0
+    k = d = a = 0
+    cs = gold = tsec = dmg = team_dmg = 0
+    wins = losses = 0
+
+    for r in rows:
+        total += 1
+        k += int(r.get("kills", 0))
+        d += int(r.get("deaths", 0))
+        a += int(r.get("assists", 0))
+        cs += float(r.get("cs", 0.0))
+        gold += float(r.get("goldEarned", 0.0))
+        tsec += float(r.get("timePlayed", 0.0))
+        dmg += float(r.get("damageDealt", 0.0))
+        team_dmg += float(r.get("teamDamage", 0.0))
+        if r.get("win") is True:
+            wins += 1
+        else:
+            losses += 1
+
+    kpis = {
+        "games": total,
+        "kda_str": kda_str(k, d, a),
+        "cs_min": cs_per_min(cs, tsec) if total else 0.0,
+        "gpm": gold_per_min(gold, tsec) if total else 0.0,
+        "dmg_share": dmg_share(team_dmg, dmg) if team_dmg > 0 else 0.0,
+        "winrate": winrate(wins, losses),
+        "kills": k,
+        "deaths": d,
+        "assists": a,
+        "wins": wins,
+        "losses": losses,
+        "timePlayed": tsec,
+    }
+    return kpis
+
+
+def kpis_to_strings(kpis: Mapping) -> Mapping[str, str]:
+    """Formatea KPIs para pintar rápido en tarjetas."""
     return {
-        "total_games": total_games,
-        "winrate": winrate,
-        "kda": kda,
+        "Partidas": str(kpis.get("games", 0)),
+        "KDA": kpis.get("kda_str", "0/0/0 (0.00)"),
+        "CS/min": fmt_ratio(kpis.get("cs_min", 0.0), 2),
+        "Oro/min": fmt_ratio(kpis.get("gpm", 0.0), 0),
+        "Daño%": fmt_pct(kpis.get("dmg_share", 0.0), 1),
+        "Winrate": fmt_pct(kpis.get("winrate", 0.0), 1),
     }
 
-def display_general_stats(user_id: str, platform: str):
-    """Mostrar estadísticas generales del invocador en Streamlit."""
-    stats = calculate_general_stats(user_id, platform)
+# ==========
+# Compat: champion KPIs agrupando por campeón a partir de partidas
+# ==========
 
-    st.title("Resumen General del Invocador")
-    st.write(f"**Total de partidas**: {stats['total_games']}")
-    st.write(f"**Winrate**: {stats['winrate']}%")
-    st.write(f"**KDA**: {stats['kda']}")
-    st.write("---")
+def _minutes_from_duration_s_or_ms(x: int | None) -> float:
+    if not x:
+        return 0.0
+    secs = int(x if x < 100_000 else x // 1000)
+    return secs / 60.0
 
+def champ_kpis_from_matches(matches: list[dict], puuid: str) -> list[dict]:
+    """
+    Agrega KPIs por campeón para el jugador `puuid` a partir de partidas RSO (match-v5).
+    Cada fila devuelta:
+      {
+        "champion": str,
+        "games": int,
+        "wins": int,
+        "winrate": float (0..1),
+        "k": float, "d": float, "a": float, "kda": float,
+        "cs_per_min": float,
+        "gold_per_min": float,
+        "vision_per_game": float,
+      }
+    """
+    agg = defaultdict(lambda: {
+        "games": 0, "wins": 0,
+        "k": 0, "d": 0, "a": 0,
+        "cs": 0, "gold": 0, "vision": 0,
+        "minutes": 0.0,
+    })
 
-# ──────────────────────────────────────────────
-# Estadísticas por campeón
-# ──────────────────────────────────────────────
+    for m in matches or []:
+        info = (m or {}).get("info", {}) or {}
+        parts = info.get("participants", []) or []
+        dur_min = _minutes_from_duration_s_or_ms(info.get("gameDuration"))
 
-def calculate_champion_stats(user_id: str, platform: str, max_games: int = 1000) -> dict:
-    """Calcula estadísticas por campeón (winrate, partidas jugadas)."""
-    champion_stats = {}
-    matches = []
+        target = None
+        for p in parts:
+            if p.get("puuid") == puuid:
+                target = p
+                break
+        if not target:
+            continue
 
-    while len(matches) < max_games:
-        match_ids = matches_by_puuid(user_id, platform, count=100)
-        for match_id in match_ids:
-            match_details = match_by_id(platform, match_id)
-            match_info = match_details.get("info", {})
+        champ = target.get("championName") or "Unknown"
+        a = agg[champ]
+        a["games"] += 1
+        # ganamos: usa participant["win"] si existe; si no, deriva de team
+        win_flag = target.get("win")
+        if isinstance(win_flag, bool):
+            win = win_flag
+        else:
+            # fallback: si no viene win booleano, intenta con teams o kills
+            win = False
+            for t in info.get("teams", []) or []:
+                if t.get("teamId") == target.get("teamId"):
+                    w = t.get("win")
+                    if isinstance(w, bool):
+                        win = w
+                    elif isinstance(w, str):
+                        win = w.lower() in ("win", "true")
+                    break
+        if win:
+            a["wins"] += 1
 
-            participant = find_participant_by_puuid(match_info, user_id)
+        k, d, v = target.get("kills", 0), target.get("deaths", 0), target.get("assists", 0)
+        cs = target.get("totalMinionsKilled", 0) + target.get("neutralMinionsKilled", 0)
+        gold = target.get("goldEarned", 0)
+        vis = target.get("visionScore", 0)
 
-            if participant:
-                champion_id = participant.get("championId")
-                win = participant.get("win", False)
+        a["k"] += k
+        a["d"] += d
+        a["a"] += v
+        a["cs"] += cs
+        a["gold"] += gold
+        a["vision"] += vis
+        a["minutes"] += max(dur_min, 0.0001)
 
-                if champion_id not in champion_stats:
-                    champion_stats[champion_id] = {"games": 0, "wins": 0}
+    rows = []
+    for champ, a in agg.items():
+        games = a["games"]
+        wins = a["wins"]
+        minutes = max(a["minutes"], 0.0001)
 
-                champion_stats[champion_id]["games"] += 1
-                if win:
-                    champion_stats[champion_id]["wins"] += 1
+        kda = _safe_div(a["k"] + a["a"], a["d"], default=a["k"] + a["a"])
+        rows.append({
+            "champion": champ,
+            "games": games,
+            "wins": wins,
+            "winrate": _safe_div(wins, games),
+            "k": a["k"] / games,
+            "d": a["d"] / games,
+            "a": a["a"] / games,
+            "kda": kda,
+            "cs_per_min": a["cs"] / minutes,
+            "gold_per_min": a["gold"] / minutes,
+            "vision_per_game": a["vision"] / games,
+        })
 
-    for champ_id, stats in champion_stats.items():
-        stats["winrate"] = (stats["wins"] / stats["games"]) * 100 if stats["games"] > 0 else 0
-
-    return champion_stats
-
-def display_champion_stats(user_id: str, platform: str):
-    """Mostrar estadísticas por campeón en Streamlit."""
-    champion_stats = calculate_champion_stats(user_id, platform)
-
-    st.title("Estadísticas por Campeón")
-    for champ_id, stats in champion_stats.items():
-        st.write(f"**Campeón {champ_id}:**")
-        st.write(f"  - **Partidas jugadas**: {stats['games']}")
-        st.write(f"  - **Winrate**: {stats['winrate']}%")
-        st.write("---")
+    # ordena por winrate y juegos
+    rows.sort(key=lambda r: (r["winrate"], r["games"]), reverse=True)
+    return rows

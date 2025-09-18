@@ -21,3 +21,38 @@ def get_env_config() -> dict:
         # Log level opcional
         "LOG_LEVEL": os.getenv("LOG_LEVEL", "INFO"),
     }
+
+try:
+    # Pydantic v2
+    from pydantic_settings import BaseSettings, SettingsConfigDict  # type: ignore
+
+    class Settings(BaseSettings):
+        # Valores por defecto sensatos para desarrollo local
+        MONGO_URI: str = (
+            "mongodb://app:appsecret@localhost:27017/"
+            "lol_realtime?authSource=lol_realtime"
+        )
+        MONGO_DB: str = "lol_realtime"
+
+        # Lee de .env si existe
+        model_config = SettingsConfigDict(
+            env_file=".env",
+            env_file_encoding="utf-8",
+            case_sensitive=False,
+        )
+
+    settings = Settings()
+
+except Exception:
+    # Fallback sin pydantic
+    class _Settings:
+        MONGO_URI: str = os.getenv(
+            "MONGO_URI",
+            "mongodb://app:appsecret@localhost:27017/"
+            "lol_realtime?authSource=lol_realtime",
+        )
+        MONGO_DB: str = os.getenv("MONGO_DB", "lol_realtime")
+
+    settings = _Settings()
+
+__all__ = ["settings"]

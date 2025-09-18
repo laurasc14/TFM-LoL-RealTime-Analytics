@@ -1,181 +1,150 @@
+# src/dashboard/pages/_01_Summoner_Search.py
+import os
+import requests
 import streamlit as st
-from typing import Dict, Any, List, Optional
-from src.dashboard.utils.riot import (
-    lookup_summoner,
-    league_entries_by_summoner,
-    matches_by_puuid,
-    match_by_id,
-    find_participant_by_puuid,
-    queue_label_to_id,
-    explain_rank_fallback,
-    save_last_known_ranks,
-    load_last_known_ranks,
-)
 
-REGIONS = [
-    "euw1", "eune1", "na1", "br1", "la1", "la2", "oc1",
-    "kr", "jp1", "tr1", "ru", "ph2", "sg2", "th2", "tw2", "vn2",
-]
+st.set_page_config(page_title="Summoner Search", page_icon="🔎", layout="wide")
 
-def _rank_line(entry: Optional[Dict[str, Any]]) -> str:
-    if not entry:
-        return "Unranked — 0 LP"
-    tier = entry.get("tier")
-    rank = entry.get("rank")
-    lp = entry.get("leaguePoints", 0)
-    if tier and rank:
-        return f"{tier.title()} {rank} — {lp} LP"
-    return "Unranked — 0 LP"
+BACKEND = os.getenv("BACKEND_URL", "http://127.0.0.1:8081")
+PLATFORMS = ["EUW1", "EUN1", "NA1", "BR1", "LA1", "LA2", "OC1", "KR", "JP1", "TR1", "RU"]
 
-def _find_entry(entries: List[Dict[str, Any]], queue: str) -> Optional[Dict[str, Any]]:
-    for e in entries or []:
-        if e.get("queueType") == queue:
-            return e
-    return None
+def split_riot_id(riot_id: str):
+    s = (riot_id or "").strip()
+    if "#" in s:
+        name, tag = s.split("#", 1)
+    elif "/" in s:
+        name, tag = [x.strip() for x in s.split("/", 1)]
+    else:
+        name, tag = s, ""
+    return name.strip(), tag.strip()
 
-def _recent_wr_summary(platform: str, puuid: str, queue_id: Optional[int], count: int = 20) -> str:
+@st.cache_data(ttl=60 * 60)
+def ddragon_version() -> str:
     try:
-        if queue_id is None:
-            ids = matches_by_puuid(puuid, platform, count=count)
-        else:
-            ids = matches_by_puuid(puuid, platform, count=count, queue=queue_id)
-    except Exception:
-        return "—"
-    total = len(ids)
-    if total == 0:
-        return "—"
-    wins = 0
-    for mid in ids:
-        try:
-            m = match_by_id(mid, platform)
-            p = find_participant_by_puuid(m, puuid)
-            if p and p.get("win"):
-                wins += 1
-        except Exception:
-            pass
-    wr = (wins / total) * 100 if total > 0 else 0.0
-    return f"{total} partidas • {wr:.1f}% WR"
-
-def _safe_lookup(region: str, query: str) -> Optional[Dict[str, Any]]:
-    """Intenta ambos órdenes de argumentos para lookup_summoner."""
-    try:
-        s = lookup_summoner(region, query)
-        if s:
-            return s
+        r = requests.get("https://ddragon.leagueoflegends.com/api/versions.json", timeout=8)
+        if r.ok:
+            vs = r.json()
+            if isinstance(vs, list) and vs:
+                return vs[0]
     except Exception:
         pass
+    return "14.16.1"
+
+def profile_icon_url(icon_id: int) -> str:
+    ver = ddragon_version()
+    return f"https://ddragon.leagueoflegends.com/cdn/{ver}/img/profileicon/{icon_id}.png"
+
+def small_label(text, fg="#cbd5e1"):
+    st.markdown(f'<div style="font-size:13px;color:{fg};margin-top:8px">{text}</div>', unsafe_allow_html=True)
+
+# ---------------- UI ----------------
+st.title("Summoner Search")
+st.caption("Busca tu Riot ID y deja guardada la sesión para las otras páginas.")
+st.write("**Backend:** ", f"[{BACKEND}]({BACKEND})")
+
+colA, colB = st.columns([1, 3])
+with colA:
+    platform = st.selectbox("Plataforma", PLATFORMS, index=PLATFORMS.index(st.session_state.get("platform", "EUW1")))
+with colB:
+    riot_id_in = st.text_input("Riot ID (Nombre#TAG)", value=st.session_state.get("riotid", ""))
+
+search = st.button("Buscar", type="primary")
+
+# ---------------- Logic ----------------
+if search:
+    name, tag = split_riot_id(riot_id_in)
+    if not name or not tag:
+        st.error("Introduce tu Riot ID en formato **Nombre#TAG** (por ejemplo: `Buiza#EUW`).")
+        st.stop()
+
+    url = f"{BACKEND}/summoner/by-riot-id/{platform}/{requests.utils.quote(name)}/{requests.utils.quote(tag)}"
     try:
-        s = lookup_summoner(query, region)
-        if s:
-            return s
-    except Exception:
-        pass
-    return None
+        r = requests.get(url, timeout=15)
+    except Exception as e:
+        st.error(f"No se pudo conectar al backend: {e}")
+        st.stop()
 
-def main():
-    st.title("Summoner Search")
-
-    if "region" not in st.session_state:
-        st.session_state["region"] = "euw1"
-    if "summoner_query" not in st.session_state:
-        st.session_state["summoner_query"] = ""
-    if "summoner" not in st.session_state:
-        st.session_state["summoner"] = None
-
-    c1, c2 = st.columns([1, 3])
-    with c1:
-        region = st.selectbox("Región", REGIONS, index=REGIONS.index(st.session_state["region"]))
-    with c2:
-        query = st.text_input(
-            "Invocador (ej: Nombre#TAG)",
-            value=st.session_state["summoner_query"],
-            max_chars=40,
-        )
-
-    do_search = st.button("Buscar", use_container_width=True)
-
-    if do_search or region != st.session_state["region"] or query != st.session_state["summoner_query"]:
-        st.session_state["region"] = region.strip().lower()
-        st.session_state["summoner_query"] = query.strip()
-
-        summ = None
-        if st.session_state["summoner_query"]:
-            summ = _safe_lookup(st.session_state["region"], st.session_state["summoner_query"])
-
-        if not summ or (not summ.get("id") and not summ.get("puuid")):
-            st.session_state["summoner"] = None
-            st.warning("No se pudo resolver el invocador. Verifica el nombre/región.")
-        else:
-            summ["region"] = st.session_state["region"]
-            st.session_state["summoner"] = summ
-
-    summ = st.session_state["summoner"]
-
-    if not summ:
-        st.subheader("—")
-        st.caption("Introduce un invocador y pulsa **Buscar**.")
-        return
-
-    display_name = summ.get("name") or st.session_state["summoner_query"]
-    st.subheader(display_name)
-    st.caption(f"Nivel {summ.get('level', '—')}")
-
-    # Mostrar el ícono del perfil
-    profile_icon_url = f"http://ddragon.leagueoflegends.com/cdn/12.22.1/img/profileicon/{summ.get('profileIconId')}.png"
-    st.image(profile_icon_url, width=50)
-
-    entries: List[Dict[str, Any]] = []
-    if summ.get("id"):
+    if r.status_code != 200:
         try:
-            entries = league_entries_by_summoner(st.session_state["region"], summ["id"])
+            detail = r.json()
         except Exception:
-            entries = []
+            detail = r.text
+        st.error(f"Error {r.status_code}: {detail}")
+        st.stop()
 
-    if summ.get("puuid") and entries:
-        try:
-            save_last_known_ranks(summ["puuid"], entries)
-        except Exception:
-            pass
+    data = r.json()
+    puuid = data.get("account", {}).get("puuid")
+    if not puuid:
+        st.error("Respuesta inesperada: no llegó el PUUID.")
+        st.stop()
 
-    cL, cR = st.columns(2)
-    with cL:
-        st.markdown("**Solo/Dúo:**")
-        solo_entry = _find_entry(entries, "RANKED_SOLO_5x5")
-        if not solo_entry and summ.get("puuid"):
-            try:
-                cached = load_last_known_ranks(summ["puuid"])
-                solo_entry = _find_entry(cached or [], "RANKED_SOLO_5x5")
-            except Exception:
-                pass
-        st.write(_rank_line(solo_entry))
+    # Guardamos claves "planas" (retro-compat)...
+    st.session_state["platform"] = platform
+    st.session_state["riotid"] = f"{name}#{tag}"
+    st.session_state["puuid"] = puuid
+    st.session_state["account"] = data.get("account", {})
+    st.session_state["summoner"] = data.get("summoner", {})
+    if "region" in data:
+        st.session_state["region"] = data["region"]
 
-    with cR:
-        st.markdown("**Flexible:**")
-        flex_entry = _find_entry(entries, "RANKED_FLEX_SR")
-        if not flex_entry and summ.get("puuid"):
-            try:
-                cached = load_last_known_ranks(summ["puuid"])
-                flex_entry = _find_entry(cached or [], "RANKED_FLEX_SR")
-            except Exception:
-                pass
-        st.write(_rank_line(flex_entry))
+    # ...y una clave compacta y estable para el resto de páginas
+    st.session_state["player"] = {
+        "platform": platform,
+        "puuid": puuid,
+        "riot_id": f"{name}#{tag}",
+        "account": data.get("account", {}),
+        "summoner": data.get("summoner", {}),
+        "region": data.get("region", None),
+    }
+    # Alias opcional si en otro lado mirabas "summoner"/"session_player"/"riot_player"
+    st.session_state["session_player"] = st.session_state["player"]
+    st.session_state["riot_player"] = st.session_state["player"]
 
-    if not _find_entry(entries, "RANKED_SOLO_5x5") and not _find_entry(entries, "RANKED_FLEX_SR"):
-        st.info(explain_rank_fallback(summ.get("puuid")), icon="ℹ️")
+    st.success("✓ Encontrado y guardado en sesión.")
+
+# ---------------- Result card ----------------
+if "puuid" in st.session_state:
+    acc = st.session_state.get("account", {})
+    summ = st.session_state.get("summoner", {})
 
     st.divider()
-    st.markdown("### Actividad reciente (últimos 20)")
-    if not summ.get("puuid"):
-        st.caption("— No hay PUUID disponible para consultar partidas.")
-        return
+    c1, c2 = st.columns([1, 5], vertical_alignment="center")
 
-    qs = [
-        ("SoloQ", queue_label_to_id("Clasificatoria Solo/Dúo")),
-        ("Flex", queue_label_to_id("Clasificatoria Flexible")),
-    ]
-    for label, qid in qs:
-        summary = _recent_wr_summary(st.session_state["region"], summ["puuid"], qid, count=20)
-        st.markdown(f"**{label}** — {summary}")
+    with c1:
+        icon_id = summ.get("profileIconId")
+        icon_src = profile_icon_url(icon_id) if icon_id is not None else \
+            "https://raw.githubusercontent.com/LoL-API-stuff/cdn/main/icons/controller.png"
+        st.image(icon_src, width=96)
+        if "summonerLevel" in summ:
+            lvl = summ["summonerLevel"]
+            st.markdown(
+                f"""
+                <div style="display:inline-block;margin-top:6px;padding:3px 8px;border-radius:10px;
+                            background:#0e7490;color:#e0f2fe;font-size:12px;">
+                    Nivel {lvl}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-if __name__ == "__main__":
-    main()
+    with c2:
+        name = acc.get("gameName", "—")
+        tag = acc.get("tagLine", "—")
+        st.subheader(f"{name}#{tag}")
+
+        small_label("Platform")
+        st.markdown(
+            f"<span style='background:#1f2937;color:#cbd5e1;padding:3px 8px;border-radius:8px;"
+            f"display:inline-block'>{st.session_state.get('platform','—')}</span>",
+            unsafe_allow_html=True,
+        )
+
+        small_label("PUUID")
+        st.markdown(f"<span style='color:#34d399'>{st.session_state['puuid']}</span>", unsafe_allow_html=True)
+
+        with st.expander("Ver JSON"):
+            st.json({"account": acc, "summoner": summ, "player": st.session_state.get("player")})
+
+    st.info("Ahora abre **02 Match History** o **03 Champion Stats** para ver tus datos.")
+else:
+    st.info("Busca un jugador y se guardará en sesión para las demás páginas.")

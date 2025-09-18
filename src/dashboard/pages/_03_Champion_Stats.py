@@ -1,300 +1,363 @@
-# _03_Champion_Stats.py — Champion Stats con roles, emojis y gráficos (fix Arena por-partida)
-from __future__ import annotations
-from typing import Dict, Any, List
-import streamlit as st
+# src/dashboard/pages/_03_Champion_Stats.py
+import os
+import time
+from datetime import datetime, timedelta
+from typing import List, Dict, Any
+
+import requests
 import pandas as pd
+import streamlit as st
 
-import src.dashboard.utils.riot as riot
+BACKEND = os.getenv("BACKEND_URL", "http://127.0.0.1:8081")
 
-# Referencias seguras al módulo riot
-matches_by_puuid = getattr(riot, "matches_by_puuid", None)
-match_by_id      = getattr(riot, "match_by_id", None)
-find_me          = getattr(riot, "find_participant_by_puuid", None)
-load_champions   = getattr(riot, "load_champions", lambda: {})
-queue_name       = getattr(riot, "queue_name", lambda q: f"Queue {q}")
-season_ts        = getattr(riot, "season_to_date_start_timestamp", lambda: None)
-get_champ_img    = getattr(riot, "get_champion_image", None)
-
-st.set_page_config(page_title="Champion Stats", layout="wide")
-
-# Colas que NO tienen rol clásico (mostrar '—')
-NO_ROLE_QUEUES = {
-    450,   # ARAM
-    1700,  # Arena (antiguo/beta)
-    1710,  # Arena (actual)
-    1300,  # Nexus Blitz
-    1400,  # Ultimate Spellbook
-    2000, 2010, 2020,  # eventos rotativos
-    910, 920           # modos rotativos antiguos
+QUEUE_OPTIONS = {
+    "Todas": None,
+    "SoloQ": 420,
+    "Flex": 440,
+    "Normals": "normals",  # 400/430
 }
 
-def _safe_div(a: float, b: float) -> float:
-    b = float(b or 0.0)
-    return float(a) / b if b > 0 else 0.0
+ROLE_ORDER = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY"]
+ROLE_LABEL = {
+    "TOP": "Top",
+    "JUNGLE": "Jungle",
+    "MIDDLE": "Mid",
+    "BOTTOM": "ADC",
+    "UTILITY": "Support",
+    "NONE": "—",
+}
 
-def _role_of(p: dict, queue_id: int | None) -> str:
+
+# ------------- helpers de sesión ----------------
+def _load_player_from_session() -> Dict[str, Any] | None:
+    # Preferimos un objeto compacto en st.session_state["player"]
+    p = st.session_state.get("player")
+    if isinstance(p, dict) and p.get("platform") and p.get("puuid"):
+        return p
+
+    # Retro-compat: llaves antiguas
+    platform = st.session_state.get("platform")
+    puuid = st.session_state.get("puuid")
+    riotid = st.session_state.get("riotid")
+    if platform and puuid:
+        return {
+            "platform": platform,
+            "puuid": puuid,
+            "riot_id": riotid or "",
+        }
+    return None
+
+
+def _need_player() -> Dict[str, Any] | None:
+    p = _load_player_from_session()
+    if not p:
+        st.warning("No hay jugador cargado. Ve a **01 Summoner Search**.")
+        return None
+    return p
+
+
+# ------------- filtros ----------------
+def _filter_by_queue(m: Dict[str, Any], qsel: Any) -> bool:
+    if qsel is None:
+        return True
+    qid = m["info"].get("queueId")
+    if qsel == "normals":
+        return qid in (400, 430)
+    return qid == qsel
+
+
+def _filter_by_time(m: Dict[str, Any], last30d: bool) -> bool:
+    if not last30d:
+        return True
+    ts = m["info"].get("gameStartTimestamp")
+    if not ts:
+        return False
+    dt = datetime.utcfromtimestamp(ts / 1000.0)
+    return dt >= datetime.utcnow() - timedelta(days=30)
+
+
+# ------------- backend robusto ----------------
+def _parse_matches_payload(payload: Any) -> List[Dict[str, Any]]:
     """
-    Normaliza el rol del participante:
-    - UTILITY  -> SUPPORT
-    - BOTTOM/BOT -> ADC
-    - Colas sin rol (ARAM, Arena, Nexus Blitz, etc.) -> '—'
+    Normaliza la respuesta del backend a lista de matches.
+    Puede venir {"matches": [...]} o directamente [...].
     """
-    if queue_id in NO_ROLE_QUEUES:
-        return "—"
+    if isinstance(payload, dict):
+        return payload.get("matches", payload.get("data", [])) or []
+    if isinstance(payload, list):
+        return payload
+    return []
 
-    r = (p.get("teamPosition") or "").upper().strip()
-    if r == "UTILITY":
-        return "SUPPORT"
-    if r == "BOTTOM":
-        return "ADC"
-    if r in {"TOP", "JUNGLE", "MIDDLE", "SUPPORT", "ADC"}:
-        return r
 
-    # Fallbacks si viene vacío
-    lane = (p.get("lane") or "").upper().strip()
-    if lane in {"MID", "MIDDLE"}:
-        return "MIDDLE"
-    if lane in {"BOT", "BOTTOM"}:
-        return "ADC"
-    if lane in {"TOP", "JUNGLE"}:
-        return lane
-    return "UNKNOWN"
+def _get_full_matches(platform: str, puuid: str, start: int, count: int) -> List[Dict]:
+    url = f"{BACKEND}/match/{platform}/matches_full"
+    r = requests.get(url, params={"puuid": puuid, "start": start, "count": count}, timeout=60)
+    r.raise_for_status()
+    return _parse_matches_payload(r.json())
 
-def _role_emoji(role: str) -> str:
-    mapping = {
-        "TOP": "🛡️",
-        "JUNGLE": "🌲",
-        "MIDDLE": "🎩",
-        "ADC": "🎯",
-        "SUPPORT": "💉",
-        "—": "🎲",        # ARAM/Arena/rotaciones sin rol
-        "UNKNOWN": "❓",
-    }
-    return mapping.get(role, "❓")
 
-def _team_kills(match: dict, team_id: int) -> int:
-    info = match.get("info", {}) or {}
-    parts = info.get("participants", []) or []
-    return sum(pp.get("kills", 0) for pp in parts if int(pp.get("teamId", 0)) == int(team_id))
-
-def main() -> None:
-    st.title("Champion Stats")
-
-    summ = st.session_state.get("summoner")
-    if not summ:
-        st.info("Primero busca un invocador en **Summoner Search**.")
-        st.stop()
-
-    platform = summ.get("region") or summ.get("platform")
-    puuid    = summ.get("puuid")
-    if not platform or not puuid:
-        st.error("Falta región/puuid en sesión.")
-        st.stop()
-
-    # --------- Filtros superiores ---------
-    QUEUES = getattr(riot, "QUEUES", {
-        "Todas": None, "Clasificatoria Solo/Dúo": 420, "Clasificatoria Flexible": 440,
-        "Normal Draft": 400, "ARAM": 450, "URF": 1900, "Arena": 1710
-    })
-    c1, c2, c3 = st.columns([1.2, 1.2, 1])
-    with c1:
-        queue_label = st.selectbox("Cola a analizar", list(QUEUES.keys()), index=0)
-        queue_filter_id = QUEUES.get(queue_label, None)  # filtro (puede ser None si 'Todas')
-    with c2:
-        count = st.slider("Nº partidas a muestrear", 5, 50, 20)
-    with c3:
-        since_season = st.toggle("Desde inicio de temporada", value=False)
-
-    start_time = None
-    if since_season:
+def _progressive_fetch(platform: str, puuid: str, max_games: int) -> List[Dict]:
+    out: List[Dict] = []
+    batch = 20
+    grabbed = 0
+    pb = st.progress(0)
+    while grabbed < max_games:
+        take = min(batch, max_games - grabbed)
         try:
-            start_time = season_ts()
-        except Exception:
-            start_time = None
+            chunk = _get_full_matches(platform, puuid, start=grabbed, count=take)
+        except requests.HTTPError as e:
+            st.error(f"Error al bajar partidas: {e}")
+            break
 
-    # --------- Obtener matches ---------
-    try:
-        mids = matches_by_puuid(
-            puuid, platform, count=count, queue=queue_filter_id, start_time=start_time
-        ) if matches_by_puuid else []
-    except Exception as e:
-        st.error(f"No se pudieron recuperar partidas: {e}")
-        st.stop()
+        if not chunk:
+            break
 
-    champs_map = load_champions()  # { intKey -> 'Ahri' }
-    if not champs_map:
-        st.warning("No se pudo cargar el mapa de campeones. Revisa la red o DDragon.")
+        out.extend(chunk)
+        grabbed += len(chunk)
+        pb.progress(int(100 * grabbed / max_games))
+        time.sleep(0.03)
 
-    # ------------------------------------------------------------
-    # Acumuladores por campeón y distribución de roles global
-    # ------------------------------------------------------------
-    agg: Dict[int, Dict[str, Any]] = {}          # championKey -> métricas agregadas
-    roles_count: Dict[int, Dict[str, int]] = {}  # championKey -> { role -> count }
-    roles_global: Dict[str, int] = {}            # distribución total por rol
+        if len(chunk) < take:
+            break
 
-    for mid in mids:
-        try:
-            m = match_by_id(platform, mid) if match_by_id else None
-            if not m:
-                continue
-        except Exception:
-            continue
+    pb.progress(100)
+    return out
 
-        info = m.get("info", {}) or {}
-        dur_s = int(info.get("gameDuration", 0) or 0)
-        dur_m = max(1.0, dur_s / 60.0)
 
-        # ⚠️ Cola real de ESTA partida (clave para Arena/ARAM aunque el filtro sea "Todas")
-        queue_id_this_match = int(info.get("queueId", 0) or 0)
+def _own_participant(match: Dict[str, Any], puuid: str) -> Dict[str, Any] | None:
+    for p in match["info"]["participants"]:
+        if p.get("puuid") == puuid:
+            return p
+    return None
 
-        me = find_me(m, puuid) if find_me else None
+
+# ------------- KPIs por campeón ----------------
+def _build_champ_rows(matches: List[Dict[str, Any]], puuid: str) -> pd.DataFrame:
+    agg: Dict[str, Dict[str, Any]] = {}
+
+    for m in matches:
+        me = _own_participant(m, puuid)
         if not me:
             continue
 
-        cid = int(me.get("championId", 0))
-        team_id = int(me.get("teamId", 0))
-        tk = _team_kills(m, team_id)
+        champ = me.get("championName", "Unknown")
+        dur_s = m["info"].get("gameDuration", 0)
+        if m["info"].get("gameEndTimestamp") and dur_s < 24 * 60 * 60:
+            dur_s = int(dur_s)
 
-        kills   = int(me.get("kills", 0))
-        deaths  = int(me.get("deaths", 0))
-        assists = int(me.get("assists", 0))
-        gold    = int(me.get("goldEarned", 0))
-        dmg     = int(me.get("totalDamageDealtToChampions", 0))
-        vision  = float(me.get("visionScore", 0) or 0.0)
-        win     = bool(me.get("win", False))
-        role    = _role_of(me, queue_id_this_match)  # <-- detectar rol por partida
-
-        a = agg.setdefault(cid, dict(
-            games=0, wins=0,
-            kills=0, deaths=0, assists=0,
-            cs=0, gold=0, dmg=0, vision=0.0,
-            time_min=0.0,
-            kp_sum=0.0, dpm_sum=0.0, gpm_sum=0.0, vpm_sum=0.0,
-        ))
-        a["games"]  += 1
-        a["wins"]   += 1 if win else 0
-        a["kills"]  += kills
-        a["deaths"] += deaths
-        a["assists"]+= assists
-        a["cs"]     += int(me.get("totalMinionsKilled",0)) + int(me.get("neutralMinionsKilled",0))
-        a["gold"]   += gold
-        a["dmg"]    += dmg
-        a["vision"] += vision
-        a["time_min"] += dur_m
-
-        kp = 100.0 * _safe_div(kills + assists, tk)
-        a["kp_sum"]  += kp
-        a["dpm_sum"] += _safe_div(dmg, dur_m)
-        a["gpm_sum"] += _safe_div(gold, dur_m)
-        a["vpm_sum"] += _safe_div(vision, dur_m)
-
-        # Roles
-        rmap = roles_count.setdefault(cid, {})
-        rmap[role] = rmap.get(role, 0) + 1
-        roles_global[role] = roles_global.get(role, 0) + 1
-
-    if not agg:
-        st.info("Sin datos suficientes para estos filtros.")
-        st.stop()
-
-    # Rol principal por campeón
-    def _main_role(cid: int) -> str:
-        rmap = roles_count.get(cid, {})
-        if not rmap:
-            return "UNKNOWN"
-        role = max(rmap.items(), key=lambda kv: kv[1])[0]
-        if role == "UTILITY":
-            return "SUPPORT"
-        if role in {"BOTTOM", "BOT"}:
-            return "ADC"
-        return role
-
-    def _champ_name(cid: int) -> str:
-        return champs_map.get(int(cid), "") or ""
-
-    def _champ_icon(cid: int) -> str:
-        return get_champ_img(int(cid), champs_map) if get_champ_img else ""
-
-    # --------------------- Tabla principal ---------------------
-    rows: List[Dict[str, Any]] = []
-    for cid, a in agg.items():
-        g = max(1, int(a["games"]))
-        name = _champ_name(cid)
-        icon = _champ_icon(cid)
-        combo = (
-            f"<div style='display:flex;align-items:center;gap:8px'>"
-            f"<img src='{icon}' width='24' height='24' style='border-radius:6px'>"
-            f"<span style='font-weight:600'>{name or cid}</span>"
-            f"</div>"
+        row = agg.setdefault(
+            champ,
+            dict(
+                Champ=champ,
+                Games=0,
+                Wins=0,
+                Kills=0,
+                Deaths=0,
+                Assists=0,
+                CS=0,
+                DMG=0,
+                Vision=0,
+                TimeS=0,
+            ),
         )
-        kda = _safe_div(a["kills"] + a["assists"], max(1, a["deaths"]))
-        main_role = _main_role(cid)
-        rows.append({
-            "Champion": combo,
-            "Games": g,
-            "Winrate": round(100.0 * a["wins"] / g, 1),
-            "KDA": round(kda, 2),
-            "KP%": round(a["kp_sum"] / g, 1),
-            "DPM": round(a["dpm_sum"] / g, 1),
-            "GPM": round(a["gpm_sum"] / g, 1),
-            "Vision/min": round(a["vpm_sum"] / g, 2),
-            "Avg CS": round(a["cs"] / g, 1),
-            "Avg Gold": round(a["gold"] / g),
-            "Avg DMG": round(a["dmg"] / g),
-            "Main Role": f"{_role_emoji(main_role)} {main_role}",
-        })
+        row["Games"] += 1
+        if me.get("win"):
+            row["Wins"] += 1
+        row["Kills"] += me.get("kills", 0)
+        row["Deaths"] += me.get("deaths", 0)
+        row["Assists"] += me.get("assists", 0)
+        cs = me.get("totalMinionsKilled", 0) + me.get("neutralMinionsKilled", 0)
+        row["CS"] += cs
+        row["DMG"] += me.get("totalDamageDealtToChampions", 0)
+        row["Vision"] += me.get("visionScore", 0)
+        row["TimeS"] += dur_s
+
+    rows = []
+    for _, k in agg.items():
+        g = k["Games"]
+        wr = (100.0 * k["Wins"] / g) if g else 0.0
+        kda = (k["Kills"] + k["Assists"]) / (k["Deaths"] if k["Deaths"] else 1)
+        min_played = (k["TimeS"] / g) / 60.0 if g else 0.0
+        cs_min = (k["CS"] / (k["TimeS"] / 60.0)) if k["TimeS"] else 0.0
+        dmg_avg = int(k["DMG"] / g) if g else 0
+        vision_avg = int(k["Vision"] / g) if g else 0
+
+        rows.append(
+            dict(
+                Champ=k["Champ"],
+                Games=g,
+                WR=wr,
+                KDA=kda,
+                CSmin=cs_min,
+                DMG=dmg_avg,
+                Vision=vision_avg,
+            )
+        )
 
     df = pd.DataFrame(rows)
-    df_sorted = df.sort_values(["Games", "Winrate"], ascending=[False, False])
+    if not df.empty:
+        df = df.sort_values(["Games", "WR"], ascending=[False, False], ignore_index=True)
+    return df
 
-    st.markdown(
-        f"### Rendimiento por campeón — {queue_label}"
-        + (" — desde inicio de temporada" if since_season else "")
+
+# ------------- Resumen por roles ----------------
+def _role_summary(matches: List[Dict[str, Any]], puuid: str) -> pd.DataFrame:
+    # teamPosition del participante: TOP/JUNGLE/MIDDLE/BOTTOM/UTILITY/NONE
+    agg: Dict[str, Dict[str, int]] = {}
+    for m in matches:
+        me = _own_participant(m, puuid)
+        if not me:
+            continue
+        role = me.get("teamPosition", "NONE")
+        r = agg.setdefault(role, dict(Games=0, Wins=0))
+        r["Games"] += 1
+        if me.get("win"):
+            r["Wins"] += 1
+
+    rows = []
+    for r in ROLE_ORDER + ["NONE"]:
+        if r not in agg:
+            continue
+        g = agg[r]["Games"]
+        wr = 100.0 * agg[r]["Wins"] / g if g else 0.0
+        rows.append(dict(Role=ROLE_LABEL.get(r, r), Games=g, WR=wr))
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values("Games", ascending=False, ignore_index=True)
+    return df
+
+
+# ------------- UI: barras estilo Porofessor ----------------
+def _bar(value: float, maxv: float, color: str, fmt: str) -> str:
+    pct = 0 if maxv <= 0 else int(100 * value / maxv)
+    pct = max(0, min(100, pct))
+    return f"""
+    <div style="width:100%;background:#20262e;border-radius:6px;overflow:hidden;height:14px;position:relative;">
+        <div style="width:{pct}%;background:{color};height:100%"></div>
+        <div style="position:absolute;top:0;left:6px;font-size:0.72rem;color:#cbd5e1;line-height:14px">{fmt}</div>
+    </div>
+    """
+
+
+def _porofessor_table(df: pd.DataFrame) -> None:
+    if df.empty:
+        st.info("No hay datos para mostrar.")
+        return
+
+    max_games = int(df["Games"].max()) if "Games" in df else 0
+    st.write(
+        """
+        <style>
+        .tbl-row {display:grid;grid-template-columns: 180px 140px 140px 120px 120px 120px; gap:14px; align-items:center;}
+        .tbl-head {font-weight:600; color:#e2e8f0; margin:6px 0 4px;}
+        .tbl-cell {font-size:0.95rem; color:#cbd5e1;}
+        .tbl-wrap {background:#0f141a;border-radius:10px;padding:14px 16px;}
+        </style>
+        """,
+        unsafe_allow_html=True,
     )
-    st.write(df_sorted.to_html(escape=False, index=False), unsafe_allow_html=True)
-    st.caption("KP%: participación en asesinatos. DPM/GPM/Vision/min calculados por partida y promediados por campeón.")
 
-    # --------------------- Visuales rápidas ---------------------
-    st.markdown("### Vistas rápidas")
-    cA, cB = st.columns(2)
+    # cabecera
+    st.markdown(
+        """
+        <div class="tbl-row tbl-head">
+            <div>Campeón</div>
+            <div>Jugadas</div>
+            <div>WR%</div>
+            <div>KDA</div>
+            <div>CS / min</div>
+            <div>DMG</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    with cA:
-        top_games = df.sort_values("Games", ascending=False).head(8)[["Champion", "Games"]].copy()
-        top_games["Name"] = top_games["Champion"].str.replace(r"<.*?>", "", regex=True)
-        tg = top_games.set_index("Name")["Games"]
-        st.bar_chart(tg, height=260, use_container_width=True)
-        st.caption("Top campeones por nº de partidas.")
+    st.write('<div class="tbl-wrap">', unsafe_allow_html=True)
+    for _, r in df.iterrows():
+        champ = r["Champ"]
+        games = int(r["Games"])
+        wr = float(r["WR"])
+        kda = float(r["KDA"])
+        csmin = float(r["CSmin"])
+        dmg = int(r["DMG"])
 
-    with cB:
-        eligible = df[df["Games"] >= 3].copy()
-        if not eligible.empty:
-            top_wr = eligible.sort_values("Winrate", ascending=False).head(8)[["Champion", "Winrate"]]
-            top_wr["Name"] = top_wr["Champion"].str.replace(r"<.*?>", "", regex=True)
-            tw = top_wr.set_index("Name")["Winrate"]
-            st.bar_chart(tw, height=260, use_container_width=True)
-            st.caption("Mejor Winrate (≥ 3 partidas).")
+        wrbar = _bar(wr, 100.0, "#22c55e", f"{wr:.1f}%")
+        gbar = _bar(games, float(max_games), "#38bdf8", f"{games}")
+
+        st.markdown(
+            f"""
+            <div class="tbl-row">
+                <div class="tbl-cell">{champ}</div>
+                <div>{gbar}</div>
+                <div>{wrbar}</div>
+                <div class="tbl-cell">{kda:.2f}</div>
+                <div class="tbl-cell">{csmin:.2f}</div>
+                <div class="tbl-cell">{dmg:,}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    st.write("</div>", unsafe_allow_html=True)
+
+
+# ------------- page ----------------
+def main():
+    st.markdown("<h1>📊 Champion Stats</h1>", unsafe_allow_html=True)
+    p = _need_player()
+    if not p:
+        return
+
+    st.caption(f"Jugador en sesión: **{p.get('riot_id', '')}** · Plataforma **{p['platform']}**")
+
+    c_top = st.columns([1, 2, 3])
+    with c_top[0]:
+        max_games = st.number_input("Partidas a analizar", 10, 200, 60, step=10)
+    with c_top[1]:
+        cola = st.selectbox("Cola a filtrar", list(QUEUE_OPTIONS.keys()), index=0)
+    with c_top[2]:
+        period = st.radio("Tiempo", ["Toda la season", "Últimos 30 días"], horizontal=True, index=0)
+
+    # Descarga progresiva
+    matches = _progressive_fetch(p["platform"], p["puuid"], max_games=max_games)
+
+    # Filtros iguales a Match History
+    last30 = period == "Últimos 30 días"
+    qsel = QUEUE_OPTIONS[cola]
+    matches = [m for m in matches if _filter_by_queue(m, qsel) and _filter_by_time(m, last30)]
+
+    if not matches:
+        st.info("Sin partidas para esos filtros.")
+        return
+
+    # KPIs por campeón
+    df_champs = _build_champ_rows(matches, p["puuid"])
+
+    # Resumen por roles
+    with st.expander("Resumen por rol"):
+        df_roles = _role_summary(matches, p["puuid"])
+        if df_roles.empty:
+            st.write("No hay datos de roles.")
         else:
-            st.info("No hay suficientes partidas (≥ 3) para mostrar top por winrate.")
+            # Render tipo tarjeta
+            cols = st.columns(len(df_roles))
+            for col, (_, row) in zip(cols, df_roles.iterrows()):
+                wr = row["WR"]
+                col.metric(f"{row['Role']}", f"{int(row['Games'])}", help="Partidas",
+                           delta=f"{wr:.0f}% WR", delta_color="normal")
 
-    # --------------------- Distribución de roles ---------------------
-    st.markdown("### Distribución de roles")
-    roles_plot = {r: c for r, c in roles_global.items()}
-    if roles_plot:
-        ordered = ["TOP", "JUNGLE", "MIDDLE", "ADC", "SUPPORT", "—", "UNKNOWN"]
-        data = [(r, roles_plot.get(r, 0)) for r in ordered if roles_plot.get(r, 0) > 0]
-        labels = [f"{_role_emoji(r)} {r}" for r, _ in data]
-        values = [v for _, v in data]
-        try:
-            import plotly.express as px
-            fig = px.pie(names=labels, values=values, hole=0.35)
-            st.plotly_chart(fig, use_container_width=True)
-        except Exception:
-            ddf = pd.DataFrame({"Role": labels, "Games": values}).set_index("Role")
-            st.bar_chart(ddf, use_container_width=True, height=280)
-    else:
-        st.info("No hay datos de roles para esta selección.")
+    # Encabezado global (coincide con match history porque se filtra igual)
+    total = len(matches)
+    wins = sum(1 for m in matches if (_own_participant(m, p["puuid"]) or {}).get("win"))
+    wr_total = 100.0 * wins / total if total else 0.0
+    st.write("")
+    s1, s2 = st.columns(2)
+    s1.metric("Games", total)
+    s2.metric("WR", f"{wr_total:.0f}%")
 
-    st.caption("Roles por partida detectados con su cola real. Modos sin rol (ARAM/Arena/NB/US, etc.) → 🎲 —.")
+    st.write("")
+    _porofessor_table(df_champs)
+
 
 if __name__ == "__main__":
     main()

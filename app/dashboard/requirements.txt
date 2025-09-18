@@ -5,3 +5,4 @@ riotwatcher>=3.2
 requests>=2.31
 matplotlib
 python-dotenv
+plotly>=5.24
